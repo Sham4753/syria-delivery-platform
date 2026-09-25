@@ -1,0 +1,142 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function user() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function role(r) { return signedIn() && user().role == r; }
+    function admin() { return role('super_admin'); }
+    function vendorOwner(vendorId) { return role('vendor_admin') && user().vendor_id == vendorId; }
+    function ownerOf(ownerType, ownerId, vendorId) { return admin() || (ownerType == 'courier' && role('courier') && request.auth.uid == ownerId) || (ownerType == 'vendor' && vendorOwner(vendorId)); }
+    function orderParty(orderId) {
+      let o = get(/databases/$(database)/documents/orders/$(orderId)).data;
+      return signedIn() && (o.customer_id == request.auth.uid || o.courier_id == request.auth.uid || vendorOwner(o.vendor_id) || admin());
+    }
+    function claimable() {
+      return signedIn() && role('courier') && resource.data.courier_id == null
+        && resource.data.status in ['pending', 'preparing', 'ready_for_pickup']
+        && request.resource.data.courier_id == request.auth.uid
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.zone_id == get(/databases/$(database)/documents/couriers/$(request.auth.uid)).data.zone_id
+        && get(/databases/$(database)/documents/courier_wallets/$(request.auth.uid)).data.debt < get(/databases/$(database)/documents/courier_wallets/$(request.auth.uid)).data.credit_limit;
+    }
+    function customerCancel() {
+      return signedIn() && resource.data.customer_id == request.auth.uid && resource.data.status == 'pending'
+        && request.resource.data.status == 'cancelled' && request.resource.data.cancelled_by == 'customer'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelled_by', 'cancellation_reason', 'updated_at']);
+    }
+    function vendorStatusChange() {
+      return vendorOwner(resource.data.vendor_id) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'prep_minutes', 'cancelled_by', 'cancellation_reason', 'updated_at'])
+        && ((resource.data.status == 'pending' && request.resource.data.status == 'preparing')
+          || (resource.data.status == 'preparing' && request.resource.data.status == 'ready_for_pickup')
+          || (resource.data.status in ['pending', 'preparing'] && request.resource.data.status == 'cancelled' && request.resource.data.cancelled_by == 'vendor'));
+    }
+    function courierStatusChange() {
+      return signedIn() && role('courier') && resource.data.courier_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated_at'])
+        && ((resource.data.status == 'ready_for_pickup' && request.resource.data.status == 'picked_up')
+          || (resource.data.status == 'picked_up' && request.resource.data.status == 'on_the_way')
+          );
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || admin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'customer'
+        && request.resource.data.keys().hasOnly(['role', 'display_name', 'phone', 'fcm_token', 'referred_by', 'updated_at']);
+      allow update: if admin() || (request.auth.uid == uid && request.resource.data.role == resource.data.role
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['display_name', 'phone', 'fcm_token', 'updated_at', 'emergency_mode_seen']));
+      allow delete: if admin();
+      match /addresses/{addressId} { allow read, create, update, delete: if signedIn() && request.auth.uid == uid; }
+    }
+    match /zones/{zoneId} { allow read: if signedIn(); allow write: if admin(); }
+    // The customer home screen needs the read-only, presentation-safe config
+    // even before authentication. All writes remain callable-only.
+    match /system_config/{configId} { allow read: if configId == 'main'; allow write: if false; }
+    match /system_config_revisions/{revisionId} { allow read: if admin(); allow write: if false; }
+    match /shifts/{shiftId} { allow read: if ownerOf(resource.data.owner_type, resource.data.owner_id, resource.data.vendor_id); allow write: if false; }
+    match /active_shifts/{activeId} { allow read: if admin() || (signedIn() && (resource.data.owner_id == request.auth.uid || vendorOwner(resource.data.owner_id))); allow write: if false; }
+    match /settlements/{settlementId} { allow read: if ownerOf(resource.data.owner_type, resource.data.owner_id, resource.data.vendor_id); allow write: if false; }
+    match /financial_ledger/{entryId} { allow read: if admin(); allow write: if false; }
+    match /audit_logs/{logId} { allow read: if admin(); allow create: if admin() && request.resource.data.actor_id == request.auth.uid && request.resource.data.keys().hasOnly(['actor_id', 'actor_email', 'action', 'target', 'details', 'created_at']); allow update, delete: if false; }
+    match /zones_geo/{zoneId} { allow read: if signedIn(); allow write: if admin(); }
+    match /vendors/{vendorId} {
+      // Internal vendor documents are not public; customers use public_vendors.
+      allow read: if admin() || vendorOwner(vendorId);
+      allow create, delete: if admin();
+      allow update: if admin() || (vendorOwner(vendorId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'address', 'phone', 'is_busy', 'opening_hours', 'updated_at']));
+      match /products/{productId} {
+        // Guests may browse available products; authenticated users and staff
+        // retain the same access as before. Cart, address and order actions
+        // still require authentication in the client and callable functions.
+        allow read: if resource.data.is_available == true || admin() || vendorOwner(vendorId);
+        allow write: if admin() || vendorOwner(vendorId);
+      }
+    }
+    match /public_vendors/{vendorId} { allow read: if resource.data.is_active == true; allow write: if false; }
+    match /coupons/{code} {
+      allow read: if signedIn(); allow write: if admin();
+      match /redemptions/{orderId} { allow read: if admin(); allow write: if false; }
+    }
+    match /ratings/{ratingId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && role('customer') && request.resource.data.customer_id == request.auth.uid && orderParty(request.resource.data.order_id)
+        && request.resource.data.keys().hasOnly(['order_id', 'customer_id', 'vendor_id', 'courier_id', 'vendor_rating', 'courier_rating', 'comment', 'created_at']);
+      allow update: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vendor_rating', 'courier_rating', 'comment', 'updated_at']));
+      allow delete: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
+    }
+    match /support_tickets/{ticketId} {
+      allow create: if signedIn() && request.resource.data.customer_id == request.auth.uid
+        && request.resource.data.status == 'open'
+        && request.resource.data.keys().hasOnly(['customer_id', 'order_id', 'subject', 'message', 'status', 'created_at', 'updated_at']);
+      allow read: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
+      allow update: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['subject', 'message', 'updated_at']));
+    }
+    match /payments/{paymentId} {
+      allow read: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
+      allow create, update, delete: if admin();
+    }
+    match /orders/{orderId} {
+      // Client order creation is callable-only: prices, totals, coupons, and stock are server-derived.
+      allow create: if false;
+      allow read: if admin() || (signedIn() && (resource.data.customer_id == request.auth.uid || resource.data.courier_id == request.auth.uid || vendorOwner(resource.data.vendor_id) || (role('courier') && resource.data.courier_id == null && resource.data.status in ['pending', 'preparing', 'ready_for_pickup'])));
+      allow update: if admin() || customerCancel();
+      allow delete: if admin();
+      match /events/{eventId} { allow read: if admin() || orderParty(orderId); allow write: if false; }
+    }
+    match /couriers/{courierId} {
+      allow read: if admin() || (signedIn() && request.auth.uid == courierId);
+      allow create: if admin();
+      allow update: if admin() || (signedIn() && request.auth.uid == courierId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['current_location', 'last_location_at', 'is_available', 'updated_at'])
+        && (!request.resource.data.keys().hasAny(['current_location']) || (request.resource.data.current_location.latitude >= -90 && request.resource.data.current_location.latitude <= 90 && request.resource.data.current_location.longitude >= -180 && request.resource.data.current_location.longitude <= 180)));
+      allow delete: if admin();
+    }
+    match /users/{uid}/wallet_ledger/{entryId} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
+    match /users/{uid}/loyalty_ledger/{entryId} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
+    match /wallet_topups/{topupId} { allow read: if signedIn() && resource.data.customer_id == request.auth.uid; allow create: if false; allow update, delete: if admin(); }
+    match /wallet_vouchers/{code} { allow read, write: if admin(); }
+    match /courier_wallets/{courierId} {
+      allow read: if admin() || (signedIn() && request.auth.uid == courierId);
+      allow create: if admin();
+      allow update: if admin();
+      match /settlements/{settlementId} { allow read: if admin() || (signedIn() && request.auth.uid == courierId); allow write: if false; }
+      match /ledger/{entryId} { allow read: if admin() || (signedIn() && request.auth.uid == courierId); allow write: if false; }
+    }
+    match /tracking/{orderId} {
+      allow read: if admin() || orderParty(orderId);
+      allow create, update: if admin() || (signedIn() && role('courier') && request.resource.data.courier_id == request.auth.uid && orderParty(orderId));
+      allow delete: if admin();
+    }
+    match /chats/{orderId}/messages/{messageId} {
+      allow read: if admin() || orderParty(orderId);
+      allow create: if orderParty(orderId) && request.resource.data.sender_id == request.auth.uid;
+      allow update: if admin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read_by']);
+      allow delete: if admin();
+    }
+    match /order_secrets/{orderId} { allow read: if signedIn() && resource.data.customer_id == request.auth.uid; allow write: if false; }
+    match /order_rate_limits/{uid} { allow read, write: if false; }
+    match /order_idempotency/{key} { allow read, write: if false; }
+  }
+}

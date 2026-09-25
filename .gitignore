@@ -1,0 +1,43 @@
+# Dependencies and build output
+node_modules/
+**/node_modules/
+admin-dashboard/dist/
+**/build/
+**/.dart_tool/
+**/.pub-cache/
+**/.gradle/
+**/.cxx/
+coverage/
+*.log
+firestore-debug.log
+.firebase/
+
+# Local/editor state
+.DS_Store
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.flutter-plugins-dependencies
+**/.flutter-plugins-dependencies
+local.properties
+
+# Local environment files and credentials
+.env
+.env.*
+!.env.example
+admin-dashboard/.env.production
+service-account*.json
+*-service-account*.json
+*private-key*.json
+
+# Signing material
+*.jks
+*.keystore
+key.properties
+
+# OS/temp/archive files
+*.zip
+*.tar.gz
+.DS_Store

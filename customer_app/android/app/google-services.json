@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "859484081324",
+    "project_id": "syria-delivery-2026-majed",
+    "storage_bucket": "syria-delivery-2026-majed.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:859484081324:android:835cee75f10e32f309a309",
+        "android_client_info": {
+          "package_name": "com.mycompany.mimoapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgdxznd8uMnjEHhWRfp9ZmYROJLniI2iY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

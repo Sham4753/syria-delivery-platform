@@ -1,0 +1,38 @@
+{
+  "restaurants": [
+    {"name":"Chili House","address":"دمشق، كفرسوسة، شام سيتي سنتر","phone":"963 11 374 2224","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"Nine one one","address":"دمشق، حي القصور","phone":"963 11 442 1054","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"أمرايا","address":"دمشق القديمة، باب توما، القيمرية","phone":"963 11 542 5990","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"إيميسا","address":"دمشق، مشروع دمر، جزيرة 1، سوق الشام المركزي","phone":"963 11 312 2202","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"البيت العربي","address":"ريف دمشق، جديدة عرطوز","phone":"963 11 680 5929","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"القرية الفرعونية","address":"ريف دمشق، الصبورة","phone":"963 11 391 1900","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"فندق ومطعم صيدنايا","address":"ريف دمشق، صيدنايا، بجانب الهاتف الآلي","phone":"963 11 595 0358","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"مطاعم جنة صيدنايا","address":"ريف دمشق، صيدنايا","phone":"963 11 595 9000","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"مطعم التلال","address":"ريف دمشق، صيدنايا","phone":"963 11 595 0001/8","source_url":"https://www.dalylak.com/00001/a/content00000156.htm"},
+    {"name":"مأكولات الشام","address":"دمشق، شارع بغداد، الفرع الرئيسي/فرع عين الكرش","phone":"0940840001؛ 2313245؛ 2319300","source_url":"https://makoolatsham.com/"}
+  ],
+  "pharmacies": [
+    {"name":"صيدلية ابن عساكر","address":"دمشق، حي ابن عساكر","phone":"011 542 0746","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية العمارة","address":"دمشق، شارع الملك فيصل","phone":"011 231 3222","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية العفيفة","address":"دمشق","phone":"","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية الأزْبكية","address":"دمشق، شارع مرشد خاطر، الأزْبكية","phone":"011 444 2998","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية البراء","address":"دمشق، نهر عائشة","phone":"011 888 8737","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية البني","address":"دمشق، البرامكة","phone":"011 222 5701","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية الفاروق","address":"ريف دمشق، داريا، شارع الوحدة","phone":"011 621 2658","source_url":"https://yellowpages-ar.cybo.com/SY/%D9%85%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية الحسن","address":"ريف دمشق، السيدة زينب","phone":"011 647 0505","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية الحكمة","address":"ريف دمشق، دوما، شارع خورشيد","phone":"011 575 8447","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"},
+    {"name":"صيدلية الهدى","address":"دمشق، المزة – جبل","phone":"011 661 9943","source_url":"https://yellowpages-ar.cybo.com/SY/%D8%AF%D9%85%D8%B4%D9%82/%D8%B5%D9%8A%D8%AF%D9%84%D9%8A%D8%A9"}
+  ],
+  "groceries": [
+    {"name":"ماركت فرحات للتوفير","address":"دمشق، زاهرة قديمة، مقابل جامع الماجد","phone":"0116380004 / 0945712929","source_url":"https://dalelsyria.com/ad/%D9%85%D8%A7%D8%B1%D9%83%D8%AA-%D9%81%D8%B1%D8%AD%D8%A7%D8%AA-%D9%84%D9%84%D8%AA%D9%88%D9%81%D9%8A%D8%B1/"},
+    {"name":"كرم ماركت","address":"دمشق، الميدان، مول الماسة بلازا، خلف جامع الحسن","phone":"0995200200","source_url":"https://dalelsyria.com/ad/%D9%83%D8%B1%D9%85-%D9%85%D8%A7%D8%B1%D9%83%D8%AA/"},
+    {"name":"محلات أبو باسم 2","address":"دمشق، الميدان، جزماتية، مقابل مطعم المحبة","phone":"0991853848","source_url":"https://dalelsyria.com/ad/%D9%85%D8%AD%D9%84%D8%A7%D8%AA-%D8%A3%D8%A8%D9%88-%D8%A8%D8%A7%D8%B3%D9%85-2/"},
+    {"name":"سوبر ماركت غراند مارت شام سنتر","address":"دمشق، تنظيم كفرسوسة، مول شام سيتي سنتر","phone":"0988118525","source_url":"https://dalelsyria.com/ad/%D8%B3%D9%88%D8%A8%D8%B1-%D9%85%D8%A7%D8%B1%D9%83%D8%AA-%D8%BA%D8%B1%D8%A7%D9%86%D8%AF-%D9%85%D8%A7%D8%B1%D8%AA-%D8%B4%D8%A7%D9%85-%D8%B3%D9%86%D8%AA%D8%B1-%D9%81%D9%8A-%D8%AF%D9%85%D8%B4%D9%82/"},
+    {"name":"دبي ماركت","address":"دمشق، آخر أوتوستراد الزاهرة الجديدة","phone":"0952600896","source_url":"https://dalelsyria.com/ad/%D8%AF%D8%A8%D9%8A-%D9%85%D8%A7%D8%B1%D9%83%D8%AA/"},
+    {"name":"العابد ماركت","address":"ريف دمشق، مدينة الكسوة، بعد جسر الكسوة مباشرة","phone":"","source_url":"https://dalelsyria.com/ad/%D8%A7%D9%84%D8%B9%D8%A7%D8%A8%D8%AF-%D9%85%D8%A7%D8%B1%D9%83%D8%AA/"},
+    {"name":"سوبر ماركت زنوبيا","address":"دمشق، حي المالكي، شارع إبراهيم هنانو","phone":"","source_url":"https://yellowpages-ar.cybo.com/SY-biz/zanobia-super-market"},
+    {"name":"دون ماركت","address":"دمشق، مزة جبل","phone":"0116630673","source_url":"https://www.facebook.com/p/Don-Market-%D8%AF%D9%88%D9%86-61583063354276/"},
+    {"name":"سوبر ماركت Number 1","address":"ريف دمشق، أشرفية صحنايا، دخلة حديقة الباسل، جانب صيدلية الرازي","phone":"0116713008 / 0997519807","source_url":"https://www.facebook.com/number1mar/"},
+    {"name":"ماركت 88","address":"ريف دمشق، صحنايا","phone":"0981100903","source_url":"https://www.instagram.com/_88market_/"}
+  ]
+}

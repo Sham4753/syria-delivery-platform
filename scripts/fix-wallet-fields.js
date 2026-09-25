@@ -1,0 +1,10 @@
+const fs = require('fs');
+const root = require('path').resolve(__dirname, '..');
+const fn = root + '/functions/index.js';
+let source = fs.readFileSync(fn, 'utf8');
+source = source.replace("emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0, loyalty_discount_redeemed: 0,", "emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,");
+fs.writeFileSync(fn, source);
+const rules = root + '/firestore.rules';
+let ruleText = fs.readFileSync(rules, 'utf8');
+ruleText = ruleText.replace("'updated_at', 'emergency_mode_seen', 'display_name', 'phone', 'display_name', 'phone'", "'updated_at', 'emergency_mode_seen', 'display_name', 'phone'");
+fs.writeFileSync(rules, ruleText);

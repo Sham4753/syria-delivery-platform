@@ -1,0 +1,506 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
+
+import '../common.dart';
+import 'login_screen.dart';
+
+class MerchantHome extends StatefulWidget {
+  final String vendorId;
+  const MerchantHome({Key? key, required this.vendorId});
+  @override
+  State<MerchantHome> createState() => _MerchantHomeState();
+}
+
+class _MerchantHomeState extends State<MerchantHome> {
+  int tab = 0;
+  Timer? orderAlertTimer;
+  bool alerting = false;
+  Stream<QuerySnapshot> get products => FirebaseFirestore.instance
+      .collection('vendors')
+      .doc(widget.vendorId)
+      .collection('products')
+      .snapshots();
+  Stream<QuerySnapshot> get orders => FirebaseFirestore.instance
+      .collection('orders')
+      .where('vendor_id', isEqualTo: widget.vendorId)
+      .orderBy('created_at', descending: true)
+      .snapshots();
+  Future<void> toggleBusy(bool busy) => FirebaseFirestore.instance
+      .collection('vendors')
+      .doc(widget.vendorId)
+      .update({'is_busy': busy, 'updated_at': FieldValue.serverTimestamp()});
+
+  Future<void> shiftAction() async {
+    final activeRef = FirebaseFirestore.instance
+        .collection('active_shifts')
+        .doc('vendor_${widget.vendorId}');
+    final active = await activeRef.get();
+    final amount = TextEditingController();
+    final isOpen = active.exists && active.data()?['shift_id'] != null;
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(isOpen ? 'إغلاق الوردية' : 'فتح وردية'),
+        content: TextField(
+          controller: amount,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: isOpen ? 'النقد الفعلي في الصندوق' : 'الرصيد الافتتاحي',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(context, amount.text.trim()), child: const Text('تأكيد')),
+        ],
+      ),
+    );
+    if (value == null || value.isEmpty) return;
+    final callable = FirebaseFunctions.instance.httpsCallable(isOpen ? 'closeShift' : 'openShift');
+    await callable.call(isOpen
+        ? {'shift_id': active.data()?['shift_id'], 'counted_cash': num.tryParse(value) ?? -1}
+        : {'owner_type': 'vendor', 'owner_id': widget.vendorId, 'opening_cash': num.tryParse(value) ?? -1});
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(isOpen ? 'تم إغلاق الوردية وإرسالها للتسوية' : 'تم فتح الوردية')));
+  }
+  Future<void> updateOrder(
+    String id,
+    String status, {
+    int? prepMinutes,
+    String? reason,
+  }) async {
+    await FirebaseFunctions.instance.httpsCallable('transitionOrderStatus').call({
+      'order_id': id,
+      'status': status,
+      'reason': reason ?? '',
+      if (prepMinutes != null) 'prep_minutes': prepMinutes,
+    });
+  }
+  @override
+  void dispose() {
+    orderAlertTimer?.cancel();
+    super.dispose();
+  }
+
+  void syncOrderAlert(bool hasPending) {
+    if (hasPending && !alerting) {
+      alerting = true;
+      SystemSound.play(SystemSoundType.alert);
+      orderAlertTimer = Timer.periodic(
+        const Duration(seconds: 4),
+        (_) => SystemSound.play(SystemSoundType.alert),
+      );
+    } else if (!hasPending && alerting) {
+      alerting = false;
+      orderAlertTimer?.cancel();
+      orderAlertTimer = null;
+    }
+  }
+
+  Future<void> cancelOrder(String id) async {
+    final reason = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('سبب الإلغاء'),
+        content: TextField(
+          controller: reason,
+          decoration: const InputDecoration(hintText: 'الصنف غير متوفر مثلًا'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('تراجع'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await updateOrder(id, 'cancelled', reason: reason.text.trim());
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('تأكيد الإلغاء'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> editHours() async {
+    final open = TextEditingController(text: '09:00'),
+        close = TextEditingController(text: '23:00');
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('جدول العمل اليومي'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: open,
+              decoration: const InputDecoration(labelText: 'وقت الفتح HH:MM'),
+            ),
+            TextField(
+              controller: close,
+              decoration: const InputDecoration(labelText: 'وقت الإغلاق HH:MM'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance
+                  .collection('vendors')
+                  .doc(widget.vendorId)
+                  .update({
+                    'opening_hours': {
+                      'open': open.text.trim(),
+                      'close': close.text.trim(),
+                    },
+                    'updated_at': FieldValue.serverTimestamp(),
+                  });
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = [_orders(), _menu(), _reports()];
+    return Scaffold(
+      appBar: AppBar(
+        title: StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('vendors')
+              .doc(widget.vendorId)
+              .snapshots(),
+          builder: (c, s) {
+            final data = s.data?.data() as Map<String, dynamic>? ?? {};
+            return Text(
+              merchantIsOpen(data)
+                  ? 'إدارة المتجر'
+                  : 'إدارة المتجر — مغلق حاليًا',
+            );
+          },
+        ),
+        actions: [
+          IconButton(onPressed: shiftAction, tooltip: 'الوردية والتسوية', icon: const Icon(Icons.point_of_sale)),
+          IconButton(
+            onPressed: editHours,
+            tooltip: 'جدول العمل',
+            icon: const Icon(Icons.schedule),
+          ),
+          StreamBuilder<DocumentSnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('vendors')
+                .doc(widget.vendorId)
+                .snapshots(),
+            builder: (c, s) {
+              final busy =
+                  (s.data?.data() as Map<String, dynamic>?)?['is_busy'] == true;
+              return Row(
+                children: [
+                  const Text('مشغول'),
+                  Switch(value: !busy, onChanged: (v) => toggleBusy(!v)),
+                ],
+              );
+            },
+          ),
+          IconButton(
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+              if (context.mounted)
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                  (_) => false,
+                );
+            },
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      body: pages[tab],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (i) => setState(() => tab = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long),
+            label: 'الطلبات',
+          ),
+          NavigationDestination(icon: Icon(Icons.menu_book), label: 'القائمة'),
+          NavigationDestination(icon: Icon(Icons.analytics), label: 'التقارير'),
+        ],
+      ),
+    );
+  }
+
+  Widget _orders() => StreamBuilder<QuerySnapshot>(
+    stream: orders,
+    builder: (c, s) {
+      if (!s.hasData) return const Center(child: CircularProgressIndicator());
+      final docs = s.data!.docs;
+      syncOrderAlert(
+        docs.any(
+          (d) => (d.data() as Map<String, dynamic>)['status'] == 'pending',
+        ),
+      );
+      if (docs.isEmpty) return const Center(child: Text('لا توجد طلبات'));
+      return ListView(
+        children: docs.map((d) {
+          final x = d.data() as Map<String, dynamic>;
+          final status = x['status'] ?? 'pending';
+          return Card(
+            child: ListTile(
+              title: Text(
+                'طلب #${d.id.substring(0, 6)} — ${x['total'] ?? 0} ل.س',
+              ),
+              subtitle: Text(
+                'الحالة: $status\nالدفع: ${x['payment_method'] ?? 'cash_on_delivery'}',
+              ),
+              isThreeLine: true,
+              trailing: status == 'pending'
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: () => cancelOrder(d.id),
+                          icon: const Icon(Icons.cancel, color: Colors.red),
+                        ),
+                        PopupMenuButton<String>(
+                          onSelected: (v) => updateOrder(
+                            d.id,
+                            v,
+                            prepMinutes: v == 'preparing' ? 20 : null,
+                          ),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'preparing',
+                              child: Text('قبول — تحضير 20 دقيقة'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
+                  : status == 'preparing'
+                  ? TextButton(
+                      onPressed: () => updateOrder(d.id, 'ready_for_pickup'),
+                      child: const Text('جاهز'),
+                    )
+                  : null,
+            ),
+          );
+        }).toList(),
+      );
+    },
+  );
+  Widget _menu() => StreamBuilder<QuerySnapshot>(
+    stream: products,
+    builder: (c, s) {
+      if (!s.hasData) return const Center(child: CircularProgressIndicator());
+      return ListView(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: FilledButton.icon(
+              onPressed: () => editProduct(context),
+              icon: const Icon(Icons.add),
+              label: const Text('إضافة صنف'),
+            ),
+          ),
+          ...s.data!.docs.map((d) {
+            final x = d.data() as Map<String, dynamic>;
+            final modifiers = (x['modifiers'] as List? ?? []).length;
+            return Card(
+              child: ListTile(
+                leading: (x['image_url'] ?? '').toString().isEmpty
+                    ? const Icon(Icons.fastfood)
+                    : Image.network(
+                        x['image_url'],
+                        width: 48,
+                        height: 48,
+                        errorBuilder: (context, error, stackTrace) =>
+                            const Icon(Icons.fastfood),
+                      ),
+                title: Text(x['name'] ?? ''),
+                subtitle: Text(
+                  '${x['category'] ?? 'عام'} — ${x['price'] ?? 0} ل.س — $modifiers خيارات',
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      onPressed: () =>
+                          editProduct(context, ref: d.reference, data: x),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      onPressed: () => d.reference.delete(),
+                    ),
+                    Switch(
+                      value: x['is_available'] != false,
+                      onChanged: (v) => d.reference.update({
+                        'is_available': v,
+                        'updated_at': FieldValue.serverTimestamp(),
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      );
+    },
+  );
+  Future<void> editProduct(
+    BuildContext context, {
+    DocumentReference? ref,
+    Map<String, dynamic>? data,
+  }) async {
+    final name = TextEditingController(text: data?['name'] ?? ''),
+        category = TextEditingController(text: data?['category'] ?? 'عام'),
+        image = TextEditingController(text: data?['image_url'] ?? ''),
+        price = TextEditingController(text: '${data?['price'] ?? ''}'),
+        modifiers = TextEditingController(
+          text: ((data?['modifiers'] as List? ?? [])
+              .map(
+                (m) =>
+                    '${m['name'] ?? ''}:${m['price'] ?? 0}:${m['mode'] ?? 'single'}:${m['required'] == true ? 'required' : 'optional'}',
+              )
+              .join('\n')),
+        );
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(ref == null ? 'صنف جديد' : 'تعديل الصنف'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: 'الاسم'),
+              ),
+              TextField(
+                controller: category,
+                decoration: const InputDecoration(labelText: 'القسم'),
+              ),
+              TextField(
+                controller: image,
+                decoration: const InputDecoration(labelText: 'رابط الصورة'),
+              ),
+              TextField(
+                controller: price,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'السعر'),
+              ),
+              TextField(
+                controller: modifiers,
+                maxLines: 5,
+                decoration: const InputDecoration(
+                  labelText:
+                      'إضافات: الاسم:السعر:single|multiple:required|optional',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final parsed = modifiers.text
+                  .split('\n')
+                  .map((line) {
+                    final p = line.split(':');
+                    return {
+                      'name': p.first.trim(),
+                      'price': p.length > 1
+                          ? num.tryParse(p[1].trim()) ?? 0
+                          : 0,
+                      'mode':
+                          p.length > 2 &&
+                              ['single', 'multiple'].contains(p[2].trim())
+                          ? p[2].trim()
+                          : 'single',
+                      'required': p.length > 3 && p[3].trim() == 'required',
+                    };
+                  })
+                  .where((m) => (m['name'] as String).isNotEmpty)
+                  .toList();
+              final payload = {
+                'name': name.text.trim(),
+                'category': category.text.trim(),
+                'image_url': image.text.trim(),
+                'price': num.tryParse(price.text) ?? 0,
+                'modifiers': parsed,
+                'is_available': data?['is_available'] != false,
+                'updated_at': FieldValue.serverTimestamp(),
+              };
+              if (ref == null)
+                await FirebaseFirestore.instance
+                    .collection('vendors')
+                    .doc(widget.vendorId)
+                    .collection('products')
+                    .add({
+                      ...payload,
+                      'created_at': FieldValue.serverTimestamp(),
+                    });
+              else
+                await ref.update(payload);
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reports() => StreamBuilder<QuerySnapshot>(
+    stream: orders,
+    builder: (c, s) {
+      final docs = s.data?.docs ?? [];
+      final total = docs.fold<num>(
+        0,
+        (a, d) => a + ((d.data() as Map<String, dynamic>)['subtotal'] ?? 0),
+      );
+      final commission = docs.fold<num>(
+        0,
+        (a, d) => a + ((d.data() as Map<String, dynamic>)['commission'] ?? 0),
+      );
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text(
+            'ملخص المبيعات',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          ListTile(
+            title: const Text('عدد الطلبات'),
+            trailing: Text('${docs.length}'),
+          ),
+          ListTile(
+            title: const Text('إجمالي المبيعات'),
+            trailing: Text('$total ل.س'),
+          ),
+          ListTile(
+            title: const Text('عمولة المنصة'),
+            trailing: Text('$commission ل.س'),
+          ),
+        ],
+      );
+    },
+  );
+}
