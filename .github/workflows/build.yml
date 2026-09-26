@@ -1,0 +1,73 @@
+name: Flutter Android Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'customer_app/**'
+      - 'merchant_app/**'
+      - 'courier_app/**'
+      - '.github/workflows/build.yml'
+
+env:
+  FLUTTER_VERSION: stable
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: customer
+            dir: customer_app
+          - name: merchant
+            dir: merchant_app
+          - name: courier
+            dir: courier_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Flutter dependencies
+        working-directory: ${{ matrix.dir }}
+        run: flutter pub get
+      - name: Format check
+        working-directory: ${{ matrix.dir }}
+        run: dart format --output=none --set-exit-if-changed lib
+      - name: Analyze
+        working-directory: ${{ matrix.dir }}
+        run: flutter analyze --fatal-infos --fatal-warnings
+      - name: Tests
+        working-directory: ${{ matrix.dir }}
+        run: flutter test
+      - name: Decode release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          test -n "$KEYSTORE_B64"
+          echo "$KEYSTORE_B64" | base64 --decode > "${{ matrix.dir }}/android/app/mimoapp-release.jks"
+          cat > "${{ matrix.dir }}/android/key.properties" <<EOF
+          storeFile=mimoapp-release.jks
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          EOF
+      - name: Build signed AAB
+        working-directory: ${{ matrix.dir }}
+        run: flutter build appbundle --release --build-number=${{ github.run_number }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimoapp-${{ matrix.name }}-${{ github.run_number }}
+          path: ${{ matrix.dir }}/build/app/outputs/bundle/release/*.aab

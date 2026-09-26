@@ -48,7 +48,16 @@ class _ProductsPageState extends State<ProductsPage> {
     }
     final key = '$id-${selected.map((m) => m['name']).join('-')}';
     final extra = selected.fold<num>(0, (sum, m) => sum + (m['price'] ?? 0));
-    setState(() => cart[key] = {...data, 'product_id': id, 'quantity': 1, 'selected_modifiers': selected, 'price': (data['price'] ?? 0) + extra});
+    setState(() {
+      final existing = cart[key];
+      cart[key] = {
+        ...data,
+        'product_id': id,
+        'quantity': (existing?['quantity'] as int? ?? 0) + 1,
+        'selected_modifiers': selected,
+        'price': (data['price'] as num? ?? 0) + extra,
+      };
+    });
   }
 
   Future<void> selectAddress() async {
