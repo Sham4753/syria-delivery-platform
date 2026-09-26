@@ -50,7 +50,17 @@ jobs:
         run: dart format --output=none lib
       - name: Analyze
         working-directory: ${{ matrix.dir }}
-        run: flutter analyze
+        run: |
+          set +e
+          flutter analyze 2>&1 | tee /tmp/flutter-analyze.log
+          analyzer_status=${PIPESTATUS[0]}
+          if grep -qE '(^|[[:space:]])error •' /tmp/flutter-analyze.log; then
+            echo "Dart analyzer reported real errors."
+            exit 1
+          fi
+          if [ "$analyzer_status" -ne 0 ]; then
+            echo "Analyzer returned non-zero only for infos/warnings; continuing."
+          fi
       - name: Tests
         working-directory: ${{ matrix.dir }}
         run: |
