@@ -3,7 +3,13 @@ name: Flutter Android Release
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'fix/**']
+    paths:
+      - 'customer_app/**'
+      - 'merchant_app/**'
+      - 'courier_app/**'
+      - '.github/workflows/build.yml'
+  pull_request:
     paths:
       - 'customer_app/**'
       - 'merchant_app/**'
