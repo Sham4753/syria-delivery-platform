@@ -1,4 +1,4 @@
-name: Flutter Android Release
+﻿name: Flutter Android Release
 
 on:
   workflow_dispatch:
@@ -32,35 +32,44 @@ jobs:
             dir: merchant_app
           - name: courier
             dir: courier_app
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - name: Flutter dependencies
         working-directory: ${{ matrix.dir }}
         run: flutter pub get
+
       - name: Format report
         working-directory: ${{ matrix.dir }}
         run: dart format --output=none lib
+
       - name: Analyze
         working-directory: ${{ matrix.dir }}
         run: |
           set +e
           flutter analyze 2>&1 | tee /tmp/flutter-analyze.log
           analyzer_status=${PIPESTATUS[0]}
+
           if grep -qE '(^|[[:space:]])error •' /tmp/flutter-analyze.log; then
             echo "Dart analyzer reported real errors."
             exit 1
           fi
+
           if [ "$analyzer_status" -ne 0 ]; then
             echo "Analyzer returned non-zero only for infos/warnings; continuing."
           fi
+
       - name: Tests
         working-directory: ${{ matrix.dir }}
         run: |
@@ -69,6 +78,7 @@ jobs:
           else
             echo "No test directory for $PWD; skipping tests."
           fi
+
       - name: Decode release keystore
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -78,17 +88,39 @@ jobs:
         run: |
           test -n "$KEYSTORE_B64"
           echo "$KEYSTORE_B64" | base64 --decode > "${{ matrix.dir }}/android/app/mimoapp-release.jks"
+
           cat > "${{ matrix.dir }}/android/key.properties" <<EOF
           storeFile=mimoapp-release.jks
           storePassword=$STORE_PASSWORD
           keyPassword=$KEY_PASSWORD
           keyAlias=$KEY_ALIAS
           EOF
+
       - name: Build signed AAB
         working-directory: ${{ matrix.dir }}
         run: flutter build appbundle --release --build-number=${{ github.run_number }}
-      - name: Upload artifact
+
+      - name: Build signed universal APK
+        working-directory: ${{ matrix.dir }}
+        run: flutter build apk --release --build-number=${{ github.run_number }}
+
+      - name: Prepare release artifacts
+        working-directory: ${{ matrix.dir }}
+        shell: bash
+        run: |
+          mkdir -p build/release-artifacts
+
+          cp build/app/outputs/bundle/release/*.aab \
+            "build/release-artifacts/mimoapp-${{ matrix.name }}-${{ github.run_number }}.aab"
+
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "build/release-artifacts/mimoapp-${{ matrix.name }}-${{ github.run_number }}.apk"
+
+          ls -lh build/release-artifacts
+
+      - name: Upload AAB and APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mimoapp-${{ matrix.name }}-${{ github.run_number }}
-          path: ${{ matrix.dir }}/build/app/outputs/bundle/release/*.aab
+          path: ${{ matrix.dir }}/build/release-artifacts/*
+          if-no-files-found: error
