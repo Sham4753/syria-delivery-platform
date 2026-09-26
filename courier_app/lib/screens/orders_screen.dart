@@ -93,8 +93,16 @@ class _CourierHomeState extends State<CourierHome> {
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied)
       permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.deniedForever) return;
-    sendLocation();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('يلزم السماح بالموقع لتحديث الطلبات')),
+        );
+      }
+      return;
+    }
+    await sendLocation();
     timer = Timer.periodic(const Duration(minutes: 2), (_) => sendLocation());
   }
 
@@ -105,6 +113,7 @@ class _CourierHomeState extends State<CourierHome> {
           accuracy: LocationAccuracy.low,
         ),
       );
+      if (!mounted) return;
       setState(() => position = current);
       final uid = FirebaseAuth.instance.currentUser?.uid;
       if (uid != null)
@@ -134,7 +143,13 @@ class _CourierHomeState extends State<CourierHome> {
               }, SetOptions(merge: true));
         }
       }
-    } catch (_) {}
+    } on Exception catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحديث الموقع: $error')),
+        );
+      }
+    }
   }
 
   @override
@@ -145,7 +160,13 @@ class _CourierHomeState extends State<CourierHome> {
         .where('courier_id', isEqualTo: uid)
         .where(
           'status',
-          whereIn: ['accepted', 'preparing', 'picked_up', 'on_the_way'],
+          whereIn: [
+            'pending',
+            'preparing',
+            'ready_for_pickup',
+            'picked_up',
+            'on_the_way',
+          ],
         )
         .snapshots();
     return Scaffold(
@@ -381,7 +402,13 @@ class OrderTile extends StatelessWidget {
         'order_id': id,
         'otp': confirmed,
       });
-    } on FirebaseFunctionsException catch (_) {}
+    } on FirebaseFunctionsException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message ?? 'تعذر تأكيد التسليم')),
+        );
+      }
+    }
   }
 
   Future<void> callCustomer() async {
