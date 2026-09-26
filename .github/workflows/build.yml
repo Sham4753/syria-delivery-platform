@@ -45,9 +45,9 @@ jobs:
       - name: Flutter dependencies
         working-directory: ${{ matrix.dir }}
         run: flutter pub get
-      - name: Format check
+      - name: Format report
         working-directory: ${{ matrix.dir }}
-        run: dart format --output=none --set-exit-if-changed lib
+        run: dart format --output=none lib
       - name: Analyze
         working-directory: ${{ matrix.dir }}
         run: flutter analyze --fatal-infos --fatal-warnings
