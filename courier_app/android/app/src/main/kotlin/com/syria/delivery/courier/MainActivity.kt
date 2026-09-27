@@ -1,4 +1,4 @@
-package com.example.courier_app
+package com.syria.delivery.courier
 
 import io.flutter.embedding.android.FlutterActivity
 
