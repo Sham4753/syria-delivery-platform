@@ -27,7 +27,7 @@ Future<T> withNetworkTimeout<T>(Future<T> request, {Duration? timeout}) =>
 
 Future<void> cacheJson(String key, Object value) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(key, jsonEncode(value));
+  await prefs.setString(key, jsonEncode(jsonSafeValue(value)));
 }
 
 Future<dynamic> readCachedJson(String key) async {
@@ -39,6 +39,18 @@ Future<dynamic> readCachedJson(String key) async {
   } catch (_) {
     return null;
   }
+}
+
+dynamic jsonSafeValue(dynamic value) {
+  if (value is Timestamp) return value.toDate().toIso8601String();
+  if (value is GeoPoint) {
+    return {'latitude': value.latitude, 'longitude': value.longitude};
+  }
+  if (value is Map) {
+    return value.map((key, item) => MapEntry(key.toString(), jsonSafeValue(item)));
+  }
+  if (value is Iterable) return value.map(jsonSafeValue).toList();
+  return value;
 }
 
 Future<Map<String, dynamic>> loadSystemConfig() async {
