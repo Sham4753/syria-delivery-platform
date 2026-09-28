@@ -75,17 +75,3 @@ Future<void> registerPushToken() async {
     }, SetOptions(merge: true));
   }
 }
-
-Future<void> ensureWallet() async {
-  final uid = FirebaseAuth.instance.currentUser?.uid;
-  if (uid == null) return;
-  final ref = FirebaseFirestore.instance.collection('courier_wallets').doc(uid);
-  if (!(await ref.get()).exists)
-    await ref.set({
-      'debt': 0,
-      'credit_limit': 100,
-      'balance': 0,
-      'total_earnings': 0,
-      'updated_at': FieldValue.serverTimestamp(),
-    });
-}

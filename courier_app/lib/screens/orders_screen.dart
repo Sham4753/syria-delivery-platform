@@ -127,7 +127,7 @@ class _CourierHomeState extends State<CourierHome> {
             .where('courier_id', isEqualTo: uid)
             .where(
               'status',
-              whereIn: ['accepted', 'preparing', 'picked_up', 'on_the_way'],
+              whereIn: ['preparing', 'ready_for_pickup', 'picked_up', 'on_the_way'],
             )
             .get();
         for (final order in active.docs) {
@@ -219,9 +219,10 @@ class _CourierHomeState extends State<CourierHome> {
                         final status =
                             (d.data() as Map<String, dynamic>)['status'];
                         return [
-                          'pending',
                           'preparing',
                           'ready_for_pickup',
+                          'picked_up',
+                          'on_the_way',
                         ].contains(status);
                       })
                       .map(
@@ -290,8 +291,12 @@ class _PendingOrdersState extends State<PendingOrders> {
               .collection('orders')
               .where('zone_id', isEqualTo: zoneId)
               .where('courier_id', isEqualTo: null)
+              .where('status', whereIn: ['pending', 'preparing', 'ready_for_pickup'])
               .snapshots(),
           builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return const Center(child: Text('تعذر تحميل الطلبات الجديدة. تحقق من الصلاحيات والاتصال.'));
+            }
             if (!snapshot.hasData)
               return const Center(child: CircularProgressIndicator());
             syncAlert(snapshot.data!.docs.isNotEmpty);

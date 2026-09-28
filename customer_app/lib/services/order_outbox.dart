@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,7 +33,16 @@ class OrderOutbox {
 
   static Future<void> _write(List<Map<String, dynamic>> items) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_outboxKey, jsonEncode(items));
+    await prefs.setString(_outboxKey, jsonEncode(_jsonSafe(items)));
+  }
+
+  static dynamic _jsonSafe(dynamic value) {
+    if (value is Timestamp) return value.toDate().toIso8601String();
+    if (value is GeoPoint) return {'latitude': value.latitude, 'longitude': value.longitude};
+    if (value is DocumentReference) return value.path;
+    if (value is Map) return value.map((key, item) => MapEntry(key.toString(), _jsonSafe(item)));
+    if (value is Iterable) return value.map(_jsonSafe).toList();
+    return value;
   }
 
   static Future<int> pendingCount() async => (await _read()).length;
@@ -43,14 +53,20 @@ class OrderOutbox {
     final ownerUid = FirebaseAuth.instance.currentUser?.uid;
     if (ownerUid == null) throw StateError('Authentication is required to queue an order');
     final items = await _read();
-    if (items.any((item) => item['idempotency_key'] == key)) return;
-    items.add({
+    final existing = items.indexWhere((item) => item['idempotency_key'] == key && item['owner_uid'] == ownerUid);
+    final queued = {
       'idempotency_key': key,
       'owner_uid': ownerUid,
       'payload': payload,
       'queued_at': DateTime.now().toUtc().toIso8601String(),
       'attempts': 0,
-    });
+    };
+    if (existing >= 0) {
+      // Keep the same idempotency key but replace a stale, unsent payload.
+      items[existing] = queued;
+    } else {
+      items.add(queued);
+    }
     await _write(items);
   }
 
@@ -88,11 +104,28 @@ class OrderOutbox {
           remaining.addAll(items.skip(index + 1));
           break;
         }
+      } on FirebaseFunctionsException catch (error) {
+        const permanent = {
+          'invalid-argument',
+          'failed-precondition',
+          'permission-denied',
+          'unauthenticated',
+          'not-found',
+          'already-exists',
+        };
+        if (permanent.contains(error.code)) {
+          if (onlyKey != null) rethrow;
+          continue;
+        }
+        final retry = Map<String, dynamic>.from(item);
+        retry['attempts'] = (retry['attempts'] as num? ?? 0) + 1;
+        retry['last_error_at'] = DateTime.now().toUtc().toIso8601String();
+        if ((retry['attempts'] as int) <= 5) remaining.add(retry);
       } catch (_) {
         final retry = Map<String, dynamic>.from(item);
         retry['attempts'] = (retry['attempts'] as num? ?? 0) + 1;
         retry['last_error_at'] = DateTime.now().toUtc().toIso8601String();
-        remaining.add(retry);
+        if ((retry['attempts'] as int) <= 5) remaining.add(retry);
       }
     }
     await _write(remaining);

@@ -79,7 +79,10 @@ service cloud.firestore {
     }
     match /ratings/{ratingId} {
       allow read: if signedIn();
-      allow create: if signedIn() && role('customer') && request.resource.data.customer_id == request.auth.uid && orderParty(request.resource.data.order_id)
+      allow create: if signedIn() && role('customer') && request.resource.data.customer_id == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.customer_id == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.status == 'delivered'
+        && request.resource.data.vendor_id == get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.vendor_id
         && request.resource.data.keys().hasOnly(['order_id', 'customer_id', 'vendor_id', 'courier_id', 'vendor_rating', 'courier_rating', 'comment', 'created_at']);
       allow update: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vendor_rating', 'courier_rating', 'comment', 'updated_at']));
@@ -132,7 +135,7 @@ service cloud.firestore {
     match /chats/{orderId}/messages/{messageId} {
       allow read: if admin() || orderParty(orderId);
       allow create: if orderParty(orderId) && request.resource.data.sender_id == request.auth.uid;
-      allow update: if admin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read_by']);
+      allow update: if admin() || (orderParty(orderId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read_by']));
       allow delete: if admin();
     }
     match /order_secrets/{orderId} { allow read: if signedIn() && resource.data.customer_id == request.auth.uid; allow write: if false; }

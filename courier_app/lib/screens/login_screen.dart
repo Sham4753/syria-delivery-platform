@@ -12,24 +12,28 @@ class _LoginPageState extends State<LoginPage> {
   final password = TextEditingController();
   Future<void> login() async {
     try {
+      final normalizedEmail = email.text.trim();
+      if (normalizedEmail.isEmpty || password.text.isEmpty) {
+        throw FirebaseAuthException(code: 'invalid-input');
+      }
       await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email.text,
+        email: normalizedEmail,
         password: password.text,
       );
-    } catch (_) {
       try {
-        await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: email.text,
-          password: password.text,
-        );
-      } catch (_) {}
-    }
-    if (mounted) {
-      await registerPushToken();
-      await ensureWallet();
+        await registerPushToken();
+      } catch (_) {
+        // Notifications are optional and must not block a successful login.
+      }
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const CourierGate()),
+      );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.code == 'invalid-input' ? 'أدخل البريد وكلمة المرور' : 'البريد أو كلمة المرور غير صحيحة')),
       );
     }
   }

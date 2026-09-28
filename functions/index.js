@@ -317,6 +317,24 @@ exports.transitionOrderStatus = onCall(async (data, context) => {
     if (nextStatus === 'picked_up') changes.picked_up_at = FieldValue.serverTimestamp();
     if (nextStatus === 'on_the_way') changes.on_the_way_at = FieldValue.serverTimestamp();
     if (nextStatus === 'delivered') changes.delivered_at = FieldValue.serverTimestamp();
+    if (nextStatus === 'cancelled' && !before.refund_processed) {
+      const walletRefund = Math.max(0, Number(before.wallet_amount || 0));
+      const pointsRefund = Math.max(0, Number(before.loyalty_points_used || 0));
+      if (walletRefund || pointsRefund) {
+        const customerRef = db.doc(`users/${before.customer_id}`);
+        const customerSnap = await tx.get(customerRef);
+        if (!customerSnap.exists) throw new HttpsError('failed-precondition', 'حساب العميل غير موجود لاسترداد الرصيد');
+        tx.update(customerRef, {wallet_balance: FieldValue.increment(walletRefund), loyalty_points: FieldValue.increment(pointsRefund), updated_at: FieldValue.serverTimestamp()});
+        if (walletRefund) tx.create(customerRef.collection('wallet_ledger').doc(`refund_${orderId}`), {label: `استرجاع الطلب ${orderId.slice(0, 6)}`, amount: walletRefund, unit: 'ل.س', direction: 'credit', order_id: orderId, created_at: FieldValue.serverTimestamp()});
+        if (pointsRefund) tx.create(customerRef.collection('loyalty_ledger').doc(`refund_${orderId}`), {label: 'استرجاع نقاط الطلب الملغى', points: pointsRefund, direction: 'credit', order_id: orderId, created_at: FieldValue.serverTimestamp()});
+      }
+      if (before.coupon_code && before.coupon_applied === true) {
+        const couponRef = db.doc(`coupons/${before.coupon_code}`);
+        tx.update(couponRef, {used_count: FieldValue.increment(-1)});
+        tx.delete(couponRef.collection('redemptions').doc(String(before.customer_id)));
+      }
+      changes.refund_processed = true;
+    }
     tx.update(orderRef, changes);
     tx.create(eventRef, {from_status: current, to_status: nextStatus, actor_id: uid, actor_role: user.role, reason, created_at: FieldValue.serverTimestamp()});
     result = {order_id: orderId, from_status: current, status: nextStatus, event_id: eventRef.id};
@@ -350,14 +368,14 @@ exports.completeDelivery = onCall(async (data, context) => {
   const orderRef = db.doc(`orders/${orderId}`); const secretRef = db.doc(`order_secrets/${orderId}`);
   const eventRef = orderRef.collection('events').doc();
   const otpHash = createHash('sha256').update(otp).digest('hex');
-  await db.runTransaction(async (tx) => {
+  const verification = await db.runTransaction(async (tx) => {
     const [orderSnap, secretSnap] = await Promise.all([tx.get(orderRef), tx.get(secretRef)]);
     const order = orderSnap.data(); const secret = secretSnap.data();
     if (!orderSnap.exists || order?.courier_id !== context.auth.uid || !['on_the_way', 'delivered'].includes(order.status)) throw new HttpsError('failed-precondition', 'الطلب غير جاهز للتسليم');
-    if (!secretSnap.exists) throw new HttpsError('permission-denied', 'رمز التسليم غير صحيح');
+    if (!secretSnap.exists) return {verified: false, reason: 'invalid'};
     const failedAttempts = Number(secret.failed_attempts || 0);
     const lockedUntil = secret.locked_until?.toMillis?.() || 0;
-    if (lockedUntil > Date.now()) throw new HttpsError('resource-exhausted', 'تم تجاوز عدد المحاولات المسموح، انتظر قليلاً وحاول مجدداً');
+    if (lockedUntil > Date.now()) return {verified: false, reason: 'locked'};
     if (secret.customer_id !== order.customer_id || otpHash !== secret.otp_hash) {
       const attempts = failedAttempts + 1;
       const patch = {failed_attempts: attempts, updated_at: FieldValue.serverTimestamp()};
@@ -366,14 +384,19 @@ exports.completeDelivery = onCall(async (data, context) => {
         patch.failed_attempts = 0;
       }
       tx.update(secretRef, patch);
-      throw new HttpsError('permission-denied', 'رمز التسليم غير صحيح');
+      return {verified: false, reason: attempts >= 5 ? 'locked' : 'invalid'};
     }
     if (failedAttempts > 0 || lockedUntil) tx.update(secretRef, {failed_attempts: 0, locked_until: FieldValue.delete()});
     if (order.status === 'on_the_way') {
       tx.update(orderRef, {status: 'delivered', delivery_otp_verified: true, delivered_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), status_changed_by: context.auth.uid});
       tx.create(eventRef, {from_status: 'on_the_way', to_status: 'delivered', actor_id: context.auth.uid, actor_role: 'courier', reason: 'otp_verified', created_at: FieldValue.serverTimestamp()});
     }
+    return {verified: true};
   });
+  if (!verification.verified) {
+    if (verification.reason === 'locked') throw new HttpsError('resource-exhausted', 'تم تجاوز عدد المحاولات المسموح، انتظر قليلاً وحاول مجدداً');
+    throw new HttpsError('permission-denied', 'رمز التسليم غير صحيح');
+  }
   return {order_id: orderId, status: 'delivered'};
 });
 
@@ -398,7 +421,7 @@ exports.cancelOrder = onCall(async (data, context) => {
       if (walletRefund) tx.create(userRef.collection('wallet_ledger').doc(`refund_${orderId}`), {label: `استرجاع الطلب ${orderId.slice(0, 6)}`, amount: walletRefund, unit: 'ل.س', direction: 'credit', order_id: orderId, created_at: FieldValue.serverTimestamp()});
       if (pointsRefund) tx.create(userRef.collection('loyalty_ledger').doc(`refund_${orderId}`), {label: 'استرجاع نقاط الطلب الملغى', points: pointsRefund, direction: 'credit', order_id: orderId, created_at: FieldValue.serverTimestamp()});
     }
-    if (order.coupon_code) {
+    if (order.coupon_code && order.coupon_applied === true) {
       const couponRef = db.doc(`coupons/${order.coupon_code}`);
       const redemptionRef = couponRef.collection('redemptions').doc(context.auth.uid);
       tx.update(couponRef, {used_count: FieldValue.increment(-1)});
@@ -433,7 +456,8 @@ exports.changeToWallet = onCall(async (data, context) => {
     const orderSnap = await tx.get(orderRef); if (!orderSnap.exists) throw new HttpsError('not-found', 'الطلب غير موجود');
     const order = orderSnap.data() || {};
     if (order.courier_id !== context.auth.uid || order.status !== 'delivered' || !['cash_on_delivery', 'hybrid'].includes(order.payment_method)) throw new HttpsError('failed-precondition', 'لا يمكن تحويل الفكة إلا بعد تسليم طلب نقدي');
-    amount = money(Number(order.cash_change_for || 0) - Number(order.change_to_wallet_amount || 0));
+    const cashDue = money(Number(order.cash_due || 0));
+    amount = money(Number(order.cash_change_for || 0) - cashDue);
     if (!Number.isFinite(amount) || amount <= 0 || order.change_to_wallet_amount) throw new HttpsError('failed-precondition', 'لا توجد فكة قابلة للتحويل أو تم تحويلها سابقًا');
     const customerId = String(order.customer_id || ''); const userRef = db.doc(`users/${customerId}`); const ledgerRef = userRef.collection('wallet_ledger').doc(`change_${orderId}`);
     tx.update(orderRef, {change_to_wallet_amount: amount, change_to_wallet_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()});
@@ -492,6 +516,7 @@ exports.createOrder = onCall(async (data, context) => {
   const cashChangeFor = Number(data?.cash_change_for || 0);
   if (!['cash_on_delivery', 'wallet', 'hybrid'].includes(paymentMethod)) throw new HttpsError('invalid-argument', 'طريقة الدفع غير مدعومة');
   if (![requestedWallet, requestedPoints, cashChangeFor].every((value) => Number.isFinite(value) && value >= 0)) throw new HttpsError('invalid-argument', 'قيم الدفع يجب أن تكون أرقامًا موجبة');
+  if (paymentMethod === 'wallet' && cashChangeFor !== 0) throw new HttpsError('invalid-argument', 'الفكة النقدية متاحة فقط للطلبات النقدية');
   const requestFingerprint = createHash('sha256').update(JSON.stringify({vendorId, zoneId, rawItems, address, couponCode, paymentMethod, requestedWallet, requestedPoints, cashChangeFor})).digest('hex');
   const idempotencyRef = db.doc(`order_idempotency/${customerId}_${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`);
   const orderRef = db.collection('orders').doc(); const secretRef = db.doc(`order_secrets/${orderRef.id}`); const deliveryOtp = String(randomInt(100000, 1000000));
@@ -557,10 +582,12 @@ exports.createOrder = onCall(async (data, context) => {
     if (paymentMethod === 'wallet' && walletUsed < totalBeforePayment) throw new HttpsError('failed-precondition', 'رصيد المحفظة غير كاف');
     if (requestedPoints > loyaltyBalance) throw new HttpsError('failed-precondition', 'نقاط الولاء غير كافية');
     const cashDue = Math.max(0, totalBeforePayment - walletUsed - pointsDiscount);
+    if (cashChangeFor > 0 && cashChangeFor < cashDue) throw new HttpsError('invalid-argument', 'الفئة النقدية يجب أن تكون أكبر أو تساوي المبلغ المطلوب');
+    if (cashDue === 0 && cashChangeFor > 0) throw new HttpsError('invalid-argument', 'لا توجد فكة مطلوبة عند عدم وجود مبلغ نقدي');
     tx.set(rateRef, {window_start: windowStart && now - windowStart < 60 * 1000 ? windowStart : now, count: windowStart && now - windowStart < 60 * 1000 ? count + 1 : 1, updated_at: FieldValue.serverTimestamp()}, {merge: true});
     tx.create(orderRef, {
       customer_id: customerId, vendor_id: vendorId, zone_id: zoneId, items, subtotal, delivery_fee: deliveryFee,
-      coupon_code: couponCode || null, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
+      coupon_code: discount > 0 ? couponCode : null, coupon_applied: discount > 0, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
       idempotency_key: idempotencyKey,
       status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_status: cashDue === 0 ? 'paid' : 'unpaid', wallet_amount: walletUsed, loyalty_points_used: requestedPoints, cash_due: cashDue, cash_change_for: cashChangeFor,
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,

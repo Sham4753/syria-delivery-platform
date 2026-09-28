@@ -96,15 +96,21 @@ class _ProductsPageState extends State<ProductsPage> {
         'delivery_address': address, 'payment_method': choice.method, 'wallet_amount': choice.walletAmount,
         'loyalty_points': choice.loyaltyPoints, 'cash_change_for': choice.cashChangeFor, 'idempotency_key': pendingIdempotencyKey,
       };
-    await OrderOutbox.enqueue(payload);
-    final submitted = await OrderOutbox.flush(onlyKey: pendingIdempotencyKey);
-    if (submitted == null) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الطلب محليًا وسيُعاد إرساله عند عودة الاتصال')));
-      return;
-    }
-    if (mounted) {
-      setState(() { cart.clear(); pendingIdempotencyKey = null; });
-      Navigator.push(context, MaterialPageRoute(builder: (_) => OrderPage(orderId: submitted.orderId)));
+    try {
+      await OrderOutbox.enqueue(payload);
+      final submitted = await OrderOutbox.flush(onlyKey: pendingIdempotencyKey);
+      if (submitted == null) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر الاتصال بالخادم. حُفظ الطلب مؤقتًا وسيُعاد إرساله عند عودة الاتصال')));
+        return;
+      }
+      if (mounted) {
+        setState(() { cart.clear(); pendingIdempotencyKey = null; });
+        Navigator.push(context, MaterialPageRoute(builder: (_) => OrderPage(orderId: submitted.orderId)));
+      }
+    } on FirebaseFunctionsException catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'تعذر إنشاء الطلب')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر إنشاء الطلب. تحقق من البيانات والاتصال.')));
     }
   }
 
@@ -123,7 +129,7 @@ class _ProductsPageState extends State<ProductsPage> {
           Padding(padding: const EdgeInsets.all(12), child: Row(children: [Expanded(child: TextField(controller: coupon, decoration: const InputDecoration(labelText: 'كود الخصم'))), IconButton(onPressed: applyCoupon, icon: const Icon(Icons.check))])),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('vendors').doc(widget.vendorId).collection('products').where('is_available', isEqualTo: true).snapshots().timeout(networkTimeout),
+              stream: FirebaseFirestore.instance.collection('vendors').doc(widget.vendorId).collection('products').where('is_available', isEqualTo: true).snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('تعذر تحميل القائمة الآن. تحقق من الاتصال ثم أعد المحاولة.')));

@@ -25,6 +25,7 @@ class _MerchantHomeState extends State<MerchantHome> {
       .collection('orders')
       .where('vendor_id', isEqualTo: widget.vendorId)
       .orderBy('created_at', descending: true)
+      .limit(50)
       .snapshots();
   Future<void> toggleBusy(bool busy) => FirebaseFirestore.instance
       .collection('vendors')
