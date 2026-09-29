@@ -13,7 +13,8 @@ import './App.css'
 const query = new URLSearchParams(window.location.search)
 const routerOnly = query.get('routerOnly') === '1'
 const pageTest = query.get('pageTest')
-const showPage = name => !pageTest || pageTest === name
+const pageSet = pageTest ? pageTest.split(',').map(item => item.trim()).filter(Boolean) : []
+const showPage = name => pageSet.length === 0 || pageSet.includes(name)
 
 class PageErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null } }
