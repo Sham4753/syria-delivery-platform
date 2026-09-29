@@ -125,6 +125,9 @@ button { cursor: pointer; }
 .auth-form { display: grid; gap: 17px; margin-top: 25px; }
 .error-message { border: 1px solid #f2c9cc; border-radius: 10px; padding: 11px 13px; color: #a83f4a; background: #fff2f3; font-size: 12px; line-height: 1.7; }
 .config-diagnostic { margin-top: 8px; border-radius: 9px; padding: 9px 11px; color: #7a5a17; background: #fff8e6; direction: ltr; font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-align: left; word-break: break-word; }
+.page-error { max-width: 720px; padding: 32px; }
+.page-error h1 { margin: 8px 0; color: var(--navy); font-size: 25px; }
+.page-error p:not(.eyebrow) { margin: 0 0 20px; color: var(--muted); line-height: 1.9; }
 code { font-family: 'IBM Plex Mono', monospace; }
 .negative { color: var(--danger); font-weight: 800; }
 
