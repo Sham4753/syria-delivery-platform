@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc } from 'firebase/firestore'
 import { auth, db, functions } from '../firebase'
 import { httpsCallable } from 'firebase/functions'
 import { Button, EmptyState, Field, Toast, useToast } from './ui'
@@ -43,8 +43,8 @@ export default function MasterSettingsPage() {
       .catch(() => active && notify('تعذر تحميل الإعدادات، يمكنك تعديلها وحفظها', 'error'))
     return () => { active = false }
   }, [notify])
-  useEffect(() => { const unsubscribe = onSnapshot(collection(db, 'vendors'), s => setVendors(s.docs.map(d => ({ id: d.id, ...d.data() })))); return unsubscribe }, [])
-  useEffect(() => { const unsubscribe = onSnapshot(collection(db, 'audit_logs'), s => setLogs(s.docs.map(d => ({ id: d.id, ...d.data() })).slice(0, 40))); return unsubscribe }, [])
+  useEffect(() => { let active = true; getDocs(collection(db, 'vendors')).then(s => { if (active) setVendors(s.docs.map(d => ({ id: d.id, ...d.data() }))) }); return () => { active = false } }, [])
+  useEffect(() => { let active = true; getDocs(collection(db, 'audit_logs')).then(s => { if (active) setLogs(s.docs.map(d => ({ id: d.id, ...d.data() })).slice(0, 40)) }); return () => { active = false } }, [])
 
   const save = async event => {
     event.preventDefault(); setBusy(true)

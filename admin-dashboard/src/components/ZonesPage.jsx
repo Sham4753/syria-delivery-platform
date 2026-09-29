@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
-import { collection, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore'
+import { collection, doc, getDocs, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from '../firebase'
 import { Button, EmptyState, Field, Modal, Toast, useToast } from './ui'
 import MapManager from '../MapManager'
 const blank = { name: '', delivery_fee_base: 0, surge_multiplier: 1, is_active: true, is_accepting_orders: true }
 export default function ZonesPage() {
   const [items, setItems] = useState([]); const [vendors, setVendors] = useState([]); const [form, setForm] = useState(blank); const [editing, setEditing] = useState(null); const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [draftPoints, setDraftPoints] = useState([]); const { toast, notify } = useToast()
-  useEffect(() => onSnapshot(collection(db, 'zones'), s => setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => notify('تعذر تحميل المناطق', 'error')), [notify])
-  useEffect(() => onSnapshot(collection(db, 'vendors'), s => setVendors(s.docs.map(d => ({ id: d.id, ...d.data() })))), [])
+  useEffect(() => { let active = true; getDocs(collection(db, 'zones')).then(s => { if (active) setItems(s.docs.map(d => ({ id: d.id, ...d.data() }))) }).catch(() => { if (active) notify('تعذر تحميل المناطق', 'error') }); return () => { active = false } }, [notify])
+  useEffect(() => { let active = true; getDocs(collection(db, 'vendors')).then(s => { if (active) setVendors(s.docs.map(d => ({ id: d.id, ...d.data() }))) }); return () => { active = false } }, [])
   const save = async e => { e.preventDefault(); if (!form.name.trim()) return notify('أدخل اسم المنطقة', 'error'); setBusy(true); try { const id = editing || `zone-${Date.now()}`; await setDoc(doc(db, 'zones', id), { ...form, name: form.name.trim(), delivery_fee_base: Number(form.delivery_fee_base), surge_multiplier: Number(form.surge_multiplier), updated_at: serverTimestamp(), ...(editing ? {} : { created_at: serverTimestamp() }) }, { merge: true }); setEditing(id); notify('تم حفظ بيانات المنطقة، ارسم حدودها على الخريطة'); } catch { notify('فشل حفظ المنطقة', 'error') } finally { setBusy(false) } }
   const saveMappedZone = async (zoneId, polygon) => { if (!zoneId || polygon.length < 3) return notify('ارسم ثلاثة نقاط على الأقل', 'error'); try { await setDoc(doc(db, 'zones_geo', zoneId), { zone_id: zoneId, name: form.name, polygon: polygon.map(([lat, lng]) => ({ lat, lng })), is_active: true, updated_at: serverTimestamp() }, { merge: true }); notify('تم حفظ حدود المنطقة بدقة'); setOpen(false); setEditing(null); setForm(blank); setDraftPoints([]) } catch { notify('تعذر حفظ حدود المنطقة', 'error') } }
   const startAdd = () => { setForm(blank); setEditing(null); setDraftPoints([]); setOpen(true) }
