@@ -4,14 +4,15 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 const mapsDisabled = new URLSearchParams(window.location.search).get('noMap') === '1'
+const EMPTY_POINTS = []
 const markerIcon = new L.Icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41] })
 function MapInteractions({ onClick, onContext }) { useMapEvents({ click: e => onClick([e.latlng.lat, e.latlng.lng]), contextmenu: e => onContext({ point: [e.latlng.lat, e.latlng.lng], x: e.containerPoint.x, y: e.containerPoint.y }) }); return null }
 function Recenter({ point }) { const map = useMap(); useEffect(() => { if (point) map.flyTo(point, 15) }, [map, point]); return null }
 async function searchPlace(query) { const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ar&q=${encodeURIComponent(query)}`, { headers: { 'Accept-Language': 'ar' } }); return response.json() }
 export function GeoSearch({ onSelect, placeholder = 'ابحث باسم مكان أو عنوان…' }) { const [query, setQuery] = useState(''); const [results, setResults] = useState([]); const [busy, setBusy] = useState(false); const submit = async e => { e.preventDefault(); if (!query.trim()) return; setBusy(true); try { setResults(await searchPlace(query.trim())) } catch { setResults([]) } finally { setBusy(false) } }; return <div className="geo-search"><form onSubmit={submit}><input value={query} onChange={e => setQuery(e.target.value)} placeholder={placeholder} /><button className="ui-button secondary" disabled={busy}>{busy ? 'بحث…' : 'بحث جغرافي'}</button></form>{results.length > 0 && <div className="geo-results">{results.map(result => <button type="button" key={result.place_id} onClick={() => { onSelect([Number(result.lat), Number(result.lon)]); setResults([]); setQuery(result.display_name) }}>{result.display_name}</button>)}</div>}</div> }
-export default function MapManager({ vendors = [], zones = [], onSaveZone, onSaveVendorLocation, draftZoneId = '', draftZonePoints = [], onDraftZonePoints, search = true, onQuickAction }) {
+export default function MapManager({ vendors = [], zones = [], onSaveZone, onSaveVendorLocation, draftZoneId = '', draftZonePoints = EMPTY_POINTS, onDraftZonePoints, search = true, onQuickAction }) {
   const [points, setPoints] = useState(draftZonePoints); const [selectedVendor, setSelectedVendor] = useState(''); const [center, setCenter] = useState([33.5138, 36.2765]); const [menu, setMenu] = useState(null)
-  useEffect(() => setPoints(draftZonePoints), [draftZonePoints])
+  useEffect(() => { setPoints(previous => previous === draftZonePoints ? previous : draftZonePoints) }, [draftZonePoints])
   const updatePoint = (index, point) => { const next = points.map((item, i) => i === index ? point : item); setPoints(next); onDraftZonePoints?.(next) }
   const click = point => { if (selectedVendor) onSaveVendorLocation?.(selectedVendor, point); else { const next = [...points, point]; setPoints(next); onDraftZonePoints?.(next) } }
   const quickAction = action => { if (!menu) return; const point = menu.point; if (action === 'vendor' && onSaveVendorLocation) onSaveVendorLocation(selectedVendor || vendors[0]?.id, point); if (action === 'boundary') click(point); onQuickAction?.(action, point); setMenu(null) }
