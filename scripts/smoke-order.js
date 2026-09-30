@@ -39,10 +39,11 @@ async function callCreateOrder(headers, data) {
 }
 
 function assertRejected(result, status, message, label) {
-  if (!result.body.error || result.body.error?.status !== status ||
-      !String(result.body.error?.message || '').includes(message)) {
-    throw new Error(`${label}: expected ${status}/${message}, got ${JSON.stringify(result.body)}`);
-  }
+  const error = result.body?.error;
+  const actualStatus = String(error?.status || '');
+  const actualMessage = String(error?.message || '');
+  if (actualStatus === status && actualMessage.includes(message)) return;
+  throw new Error(`${label}: expected ${status}/${message}, got ${JSON.stringify(result.body)}`);
 }
 
 async function orderCount(customerId) {
