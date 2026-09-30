@@ -157,7 +157,11 @@ async function main() {
   assertRejected(await callCreateOrder(vendorHeaders, {...baseData, idempotency_key: `smoke-order-vendor-${runId}`}), 'PERMISSION_DENIED', 'للعملاء فقط', 'non-customer role');
   assertRejected(await callCreateOrder(headers, {...baseData, idempotency_key: `smoke-order-unknown-field-${runId}`, __smoke_unknown: true}), 'INVALID_ARGUMENT', 'حقول الاختبار المحلي', 'unknown smoke field');
   if (target === 'staging') {
-    assertRejected(await callCreateOrder(headers, {...baseData, idempotency_key: `smoke-order-injection-on-staging-${runId}`, __smoke_fail_after_order_write: true}), 'INVALID_ARGUMENT', 'حقول الاختبار المحلي', 'atomicity injection blocked on staging');
+    const stagingInjectionData = {...baseData, idempotency_key: `smoke-order-injection-on-staging-${runId}`, __smoke_fail_after_order_write: true};
+    const stagingBeforeInjection = await orderCount(auth.idToken, auth.localId);
+    assertRejected(await callCreateOrder(headers, stagingInjectionData), 'INVALID_ARGUMENT', 'حقول الاختبار المحلي', 'atomicity injection blocked on staging');
+    const stagingAfterInjection = await orderCount(auth.idToken, auth.localId);
+    if (stagingAfterInjection !== stagingBeforeInjection) throw new Error(`staging smoke injection created an order: ${stagingBeforeInjection} -> ${stagingAfterInjection}`);
   }
   await assertDirectOrderWriteDenied(auth.idToken, `smoke-direct-write-${runId}`);
 
