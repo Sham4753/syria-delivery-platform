@@ -265,7 +265,7 @@ async function main() {
     const advancedOrder = await callCreateOrder(headers, {...baseData, idempotency_key: `smoke-order-advanced-status-${runId}`});
     if (!advancedOrder.response.ok || advancedOrder.body.error) throw new Error(`advanced-status fixture failed: ${JSON.stringify(advancedOrder.body)}`);
     const advancedId = advancedOrder.body.result.order_id;
-    for (const status of ['preparing', 'picked_up', 'on_the_way', 'delivering', 'delivered']) {
+    for (const status of ['preparing', 'ready_for_pickup', 'picked_up', 'on_the_way', 'delivering', 'delivered']) {
       await db.doc(`orders/${advancedId}`).update({status});
       const rejected = await callCancelOrder(headers, {order_id: advancedId, reason: `status ${status}`});
       assertRejected(rejected, 'FAILED_PRECONDITION', 'لا يمكن إلغاء الطلب', `cancel advanced status ${status}`);
@@ -276,10 +276,15 @@ async function main() {
 
     await resetEmulatorRateLimit(auth.localId);
     const hybridData = {...baseData, idempotency_key: `smoke-order-hybrid-cancel-${runId}`, payment_method: 'hybrid', wallet_amount: 10000, loyalty_points: 10};
+    const beforeHybridCreate = (await db.doc(`users/${auth.localId}`).get()).data() || {};
     const hybridOrder = await callCreateOrder(headers, hybridData);
     if (!hybridOrder.response.ok || hybridOrder.body.error) throw new Error(`hybrid fixture failed: ${JSON.stringify(hybridOrder.body)}`);
     const hybridId = hybridOrder.body.result.order_id;
-    const beforeRefund = (await db.doc(`users/${auth.localId}`).get()).data() || {};
+    const afterHybridCreate = (await db.doc(`users/${auth.localId}`).get()).data() || {};
+    if (Number(beforeHybridCreate.wallet_balance) - Number(afterHybridCreate.wallet_balance) !== hybridData.wallet_amount ||
+        Number(beforeHybridCreate.loyalty_points) - Number(afterHybridCreate.loyalty_points) !== hybridData.loyalty_points) {
+      throw new Error(`hybrid payment debit was not exact: ${JSON.stringify({beforeHybridCreate, afterHybridCreate, expected: {wallet: hybridData.wallet_amount, points: hybridData.loyalty_points}})}`);
+    }
     const cancelRace = await Promise.all([callCancelOrder(headers, {order_id: hybridId, reason: 'race 1'}), callCancelOrder(headers, {order_id: hybridId, reason: 'race 2'})]);
     const successfulCancels = cancelRace.filter((result) => result.response.ok && !result.body.error);
     const rejectedCancels = cancelRace.filter((result) => result.body.error);
@@ -288,12 +293,14 @@ async function main() {
     const afterRefund = (await db.doc(`users/${auth.localId}`).get()).data() || {};
     const hybridSnap = await db.doc(`orders/${hybridId}`).get();
     const hybrid = hybridSnap.data() || {};
-    if (Number(afterRefund.wallet_balance) - Number(beforeRefund.wallet_balance) !== Number(hybrid.wallet_refunded) ||
-        Number(afterRefund.loyalty_points) - Number(beforeRefund.loyalty_points) !== Number(hybrid.loyalty_points_refunded) ||
+    if (Number(afterRefund.wallet_balance) - Number(afterHybridCreate.wallet_balance) !== Number(hybrid.wallet_refunded) ||
+        Number(afterRefund.loyalty_points) - Number(afterHybridCreate.loyalty_points) !== Number(hybrid.loyalty_points_refunded) ||
+        Number(afterRefund.wallet_balance) !== Number(beforeHybridCreate.wallet_balance) ||
+        Number(afterRefund.loyalty_points) !== Number(beforeHybridCreate.loyalty_points) ||
         Number(hybrid.wallet_refunded) !== 10000 || Number(hybrid.loyalty_points_refunded) !== 10 ||
         !(await db.doc(`users/${auth.localId}/wallet_ledger/refund_${hybridId}`).get()).exists ||
         !(await db.doc(`users/${auth.localId}/loyalty_ledger/${hybridId}`).get()).exists) {
-      throw new Error(`hybrid cancellation refund was not applied exactly once: ${JSON.stringify({beforeRefund, afterRefund, hybrid})}`);
+      throw new Error(`hybrid cancellation debit/refund was not exact: ${JSON.stringify({beforeHybridCreate, afterHybridCreate, afterRefund, hybrid})}`);
     }
     hybridRefundCheck = true;
   }
@@ -330,7 +337,7 @@ async function main() {
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency', 'customer_scoped_order_query',
       ...(advancedStatusChecks.length ? ['customer_cancel_advanced_statuses_denied'] : []),
-      ...(hybridRefundCheck ? ['hybrid_cancel_refund_once_under_concurrency'] : []),
+      ...(hybridRefundCheck ? ['hybrid_balance_debit_and_refund_exact_once'] : []),
       ...(process.env.SMOKE_ATOMICITY_TEST === '1' ? ['atomicity_injected_failure_no_artifacts'] : []),
     ],
   }, null, 2));
