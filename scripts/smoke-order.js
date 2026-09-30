@@ -41,10 +41,8 @@ async function callCreateOrder(headers, data) {
 function assertRejected(result, status, message, label) {
   const error = result.body?.error;
   const normalize = (value) => String(value || '')
-    .normalize('NFC')
-    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{N}]+/gu, '');
   const actualStatus = normalize(error?.status);
   const actualMessage = normalize(error?.message);
   const expectedStatus = normalize(status);
@@ -93,7 +91,7 @@ async function main() {
   };
 
   assertRejected(await callCreateOrder({'content-type': 'application/json'}, baseData), 'UNAUTHENTICATED', 'تسجيل الدخول', 'unauthenticated caller');
-  assertRejected(await callCreateOrder(vendorHeaders, {...baseData, idempotency_key: `smoke-order-vendor-${runId}`}), 'PERMISSION_DENIED', 'العملاء فقط', 'non-customer role');
+  assertRejected(await callCreateOrder(vendorHeaders, {...baseData, idempotency_key: `smoke-order-vendor-${runId}`}), 'PERMISSION_DENIED', 'للعملاء فقط', 'non-customer role');
   await assertDirectOrderWriteDenied(auth.idToken, `smoke-direct-write-${runId}`);
 
   const missingLocation = {...baseData, idempotency_key: 'smoke-order-missing-location-01', delivery_address: {...baseData.delivery_address, location: null}};
