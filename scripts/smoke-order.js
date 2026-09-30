@@ -134,12 +134,26 @@ async function main() {
     headers: {authorization: `Bearer ${otherCustomerAuth.idToken}`},
   });
   await assertDirectOrderRequestDenied(otherCustomerRead, 'other customer order read');
-  const sensitiveUpdate = await fetch(`${firestoreUrl}/orders/${order.body.result.order_id}?updateMask.fieldPaths=total`, {
-    method: 'PATCH',
-    headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
-    body: JSON.stringify({fields: {total: {doubleValue: 1}}}),
+  const unfilteredOrderList = await fetch(`${firestoreUrl}/orders`, {
+    headers: {authorization: `Bearer ${otherCustomerAuth.idToken}`},
   });
-  await assertDirectOrderRequestDenied(sensitiveUpdate, 'sensitive order update');
+  await assertDirectOrderRequestDenied(unfilteredOrderList, 'unfiltered order list');
+  const sensitiveFields = [
+    ['total', {doubleValue: 1}],
+    ['status', {stringValue: 'preparing'}],
+    ['payment_method', {stringValue: 'wallet'}],
+    ['vendor_id', {stringValue: 'vendor-evil'}],
+    ['customer_id', {stringValue: 'customer-evil'}],
+    ['delivery_address', {mapValue: {fields: {location: {mapValue: {fields: {latitude: {doubleValue: 1}, longitude: {doubleValue: 1}}}}}}}],
+  ];
+  for (const [field, value] of sensitiveFields) {
+    const sensitiveUpdate = await fetch(`${firestoreUrl}/orders/${order.body.result.order_id}?updateMask.fieldPaths=${encodeURIComponent(field)}`, {
+      method: 'PATCH',
+      headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
+      body: JSON.stringify({fields: {[field]: value}}),
+    });
+    await assertDirectOrderRequestDenied(sensitiveUpdate, `sensitive order update: ${field}`);
+  }
 
   const replayCountBefore = await orderCount(auth.localId);
   const replay = await callCreateOrder(headers, baseData);
@@ -169,7 +183,7 @@ async function main() {
     customer: 'customer01@test.local',
     vendor: 'restaurant-01',
     checks: [
-      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'sensitive_update_denied', 'missing_location',
+      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency',
     ],
