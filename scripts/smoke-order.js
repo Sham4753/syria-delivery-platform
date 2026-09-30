@@ -155,6 +155,10 @@ async function main() {
 
   assertRejected(await callCreateOrder({'content-type': 'application/json'}, baseData), 'UNAUTHENTICATED', 'تسجيل الدخول', 'unauthenticated caller');
   assertRejected(await callCreateOrder(vendorHeaders, {...baseData, idempotency_key: `smoke-order-vendor-${runId}`}), 'PERMISSION_DENIED', 'للعملاء فقط', 'non-customer role');
+  assertRejected(await callCreateOrder(headers, {...baseData, idempotency_key: `smoke-order-unknown-field-${runId}`, __smoke_unknown: true}), 'INVALID_ARGUMENT', 'حقول الاختبار المحلي', 'unknown smoke field');
+  if (target === 'staging') {
+    assertRejected(await callCreateOrder(headers, {...baseData, idempotency_key: `smoke-order-injection-on-staging-${runId}`, __smoke_fail_after_order_write: true}), 'INVALID_ARGUMENT', 'حقول الاختبار المحلي', 'atomicity injection blocked on staging');
+  }
   await assertDirectOrderWriteDenied(auth.idToken, `smoke-direct-write-${runId}`);
 
   const missingLocation = {...baseData, idempotency_key: 'smoke-order-missing-location-01', delivery_address: {...baseData.delivery_address, location: null}};
@@ -334,7 +338,7 @@ async function main() {
     customer: customerEmail,
     vendor: 'restaurant-01',
     checks: [
-      'unauthenticated_rejected', 'non_customer_rejected', 'cancel_unauthenticated_rejected', 'cancel_non_customer_rejected', 'cancel_invalid_id_rejected', 'cancel_missing_order_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_direct_write_denied', 'customer_cancel_callable_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
+      'unauthenticated_rejected', 'non_customer_rejected', 'smoke_fields_rejected', 'cancel_unauthenticated_rejected', 'cancel_non_customer_rejected', 'cancel_invalid_id_rejected', 'cancel_missing_order_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_direct_write_denied', 'customer_cancel_callable_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency', 'customer_scoped_order_query',
       ...(advancedStatusChecks.length ? ['customer_cancel_advanced_statuses_denied'] : []),
