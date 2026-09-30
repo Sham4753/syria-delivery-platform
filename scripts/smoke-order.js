@@ -70,8 +70,14 @@ async function assertDirectOrderWriteDenied(idToken, documentId) {
   if (response.status !== 403) throw new Error(`direct order write was not denied: ${response.status} ${text.slice(0, 200)}`);
 }
 
+async function assertDirectOrderRequestDenied(response, label) {
+  const text = await response.text();
+  if (response.status !== 403) throw new Error(`${label} was not denied: ${response.status} ${text.slice(0, 200)}`);
+}
+
 async function main() {
   const auth = await login('customer01@test.local');
+  const otherCustomerAuth = await login('customer02@test.local');
   const vendorAuth = await login('vendor@test.local');
   const headers = {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`};
   const vendorHeaders = {'content-type': 'application/json', authorization: `Bearer ${vendorAuth.idToken}`};
@@ -124,6 +130,17 @@ async function main() {
   const order = await callCreateOrder(headers, baseData);
   if (!order.response.ok || order.body.error) throw new Error(`createOrder failed: ${order.response.status} ${JSON.stringify(order.body)}`);
 
+  const otherCustomerRead = await fetch(`${firestoreUrl}/orders/${order.body.result.order_id}`, {
+    headers: {authorization: `Bearer ${otherCustomerAuth.idToken}`},
+  });
+  await assertDirectOrderRequestDenied(otherCustomerRead, 'other customer order read');
+  const sensitiveUpdate = await fetch(`${firestoreUrl}/orders/${order.body.result.order_id}?updateMask.fieldPaths=total`, {
+    method: 'PATCH',
+    headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
+    body: JSON.stringify({fields: {total: {doubleValue: 1}}}),
+  });
+  await assertDirectOrderRequestDenied(sensitiveUpdate, 'sensitive order update');
+
   const replayCountBefore = await orderCount(auth.localId);
   const replay = await callCreateOrder(headers, baseData);
   const replayCountAfter = await orderCount(auth.localId);
@@ -136,11 +153,11 @@ async function main() {
 
   const concurrent = {...baseData, idempotency_key: `smoke-order-concurrent-${runId}`};
   const concurrentBefore = await orderCount(auth.localId);
-  const concurrentResults = await Promise.all([callCreateOrder(headers, concurrent), callCreateOrder(headers, concurrent)]);
+  const concurrentResults = await Promise.all(Array.from({length: 20}, () => callCreateOrder(headers, concurrent)));
   const concurrentIds = concurrentResults.map((result) => result.body.result?.order_id);
   const concurrentAfter = await orderCount(auth.localId);
   if (concurrentResults.some((result) => !result.response.ok || result.body.error) ||
-      concurrentIds[0] !== concurrentIds[1] || concurrentAfter !== concurrentBefore + 1) {
+      new Set(concurrentIds).size !== 1 || concurrentAfter !== concurrentBefore + 1) {
     throw new Error(`concurrent idempotency failed: ${JSON.stringify(concurrentResults.map((result) => result.body))} count ${concurrentBefore}->${concurrentAfter}`);
   }
 
@@ -152,7 +169,7 @@ async function main() {
     customer: 'customer01@test.local',
     vendor: 'restaurant-01',
     checks: [
-      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'missing_location',
+      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'sensitive_update_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency',
     ],
