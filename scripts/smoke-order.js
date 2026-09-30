@@ -15,7 +15,7 @@ async function main() {
       { product_id: 'meal', quantity: 1, selected_modifiers: [] },
       { product_id: 'drink', quantity: 2, selected_modifiers: [] },
     ],
-    delivery_address: { label: 'المنزل', city: 'دمشق', address: 'عنوان اختبار الشراء - دمشق', landmark: 'قرب المنطقة الأولى', lat: 33.5138, lng: 36.2765 },
+    delivery_address: { label: 'المنزل', city: 'دمشق', address: 'عنوان اختبار الشراء - دمشق', landmark: 'قرب المنطقة الأولى', location: { latitude: 33.5138, longitude: 36.2765 } },
     payment_method: 'hybrid', wallet_amount: 10000, loyalty_points: 10, cash_change_for: 100000,
   } };
   const order = await fetch(callableUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${auth.idToken}` }, body: JSON.stringify(payload) });

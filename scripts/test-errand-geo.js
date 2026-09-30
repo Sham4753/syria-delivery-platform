@@ -8,6 +8,8 @@ const P = (latitude, longitude) => ({latitude, longitude});
 // تطبيع النقاط
 assert.deepStrictEqual(normalizePoint({lat: 33.5, lng: 36.3}), P(33.5, 36.3));
 assert.deepStrictEqual(normalizePoint({latitude: 33.5, longitude: 36.3}), P(33.5, 36.3));
+const callableAddress = {location: {latitude: 33.5, longitude: 36.3}};
+assert.deepStrictEqual(normalizePoint(callableAddress.location), P(33.5, 36.3));
 for (const bad of [null, undefined, 'x', {}, {latitude: '33', longitude: '36'}, {latitude: NaN, longitude: 1}, {latitude: 91, longitude: 0}, {latitude: 0, longitude: 181}, {latitude: Infinity, longitude: 0}]) {
   assert.strictEqual(normalizePoint(bad), null, `should reject ${JSON.stringify(bad)}`);
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -19,11 +21,13 @@ class _AddressBookPageState extends State<AddressBookPage> {
       .doc(FirebaseAuth.instance.currentUser!.uid)
       .collection('addresses');
 
-  Future<LatLng?> _pickLocation() async {
-    LatLng selected = _defaultMapCenter;
+  Future<LatLng?> _pickLocation({LatLng? initialLocation}) async {
+    LatLng selected = initialLocation ?? _defaultMapCenter;
+    final mapController = MapController();
     bool hasSelection = false;
     bool locating = false;
     String? locationError;
+    bool permissionDeniedForever = false;
 
     return showDialog<LatLng>(
       context: context,
@@ -41,20 +45,31 @@ class _AddressBookPageState extends State<AddressBookPage> {
               }
               if (permission == LocationPermission.denied ||
                   permission == LocationPermission.deniedForever) {
-                throw StateError('لم يتم السماح بالوصول إلى الموقع');
+                permissionDeniedForever = permission == LocationPermission.deniedForever;
+                throw StateError(permissionDeniedForever
+                    ? 'السماح بالموقع مطلوب من إعدادات التطبيق'
+                    : 'لم يتم السماح بالوصول إلى الموقع');
               }
               final position = await Geolocator.getCurrentPosition(
-                locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+                locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.high,
+                  timeLimit: Duration(seconds: 15),
+                ),
               );
+              if (!context.mounted) return;
               setDialogState(() {
                 selected = LatLng(position.latitude, position.longitude);
                 hasSelection = true;
                 locating = false;
               });
+              mapController.move(selected, 16);
             } catch (error) {
+              if (!context.mounted) return;
               setDialogState(() {
                 locating = false;
-                locationError = error.toString().replaceFirst('Bad state: ', '');
+                locationError = error is TimeoutException
+                    ? 'تعذر الحصول على الموقع خلال المهلة المحددة'
+                    : error.toString().replaceFirst('Bad state: ', '');
               });
             }
           }
@@ -63,7 +78,7 @@ class _AddressBookPageState extends State<AddressBookPage> {
             title: const Text('حدد موقع التوصيل'),
             contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             content: SizedBox(
-              width: 520,
+              width: MediaQuery.sizeOf(context).width - 48,
               height: 430,
               child: Column(
                 children: [
@@ -72,6 +87,7 @@ class _AddressBookPageState extends State<AddressBookPage> {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: FlutterMap(
+                        mapController: mapController,
                         options: MapOptions(
                           initialCenter: selected,
                           initialZoom: 13,
@@ -100,6 +116,9 @@ class _AddressBookPageState extends State<AddressBookPage> {
                               ),
                             ],
                           ),
+                          RichAttributionWidget(
+                            attributions: [TextSourceAttribution('OpenStreetMap contributors')],
+                          ),
                         ],
                       ),
                     ),
@@ -122,12 +141,22 @@ class _AddressBookPageState extends State<AddressBookPage> {
                   const Spacer(),
                   Align(
                     alignment: AlignmentDirectional.centerStart,
-                    child: OutlinedButton.icon(
-                      onPressed: locating ? null : useGps,
-                      icon: locating
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.my_location),
-                      label: const Text('استخدام موقعي الحالي'),
+                    child: Wrap(
+                      spacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: locating ? null : useGps,
+                          icon: locating
+                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.my_location),
+                          label: const Text('استخدام موقعي الحالي'),
+                        ),
+                        if (permissionDeniedForever)
+                          TextButton(
+                            onPressed: Geolocator.openAppSettings,
+                            child: const Text('فتح الإعدادات'),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -152,6 +181,7 @@ class _AddressBookPageState extends State<AddressBookPage> {
     final apartment = TextEditingController();
     final landmark = TextEditingController();
     LatLng? selectedLocation;
+    bool saving = false;
     try {
       await showDialog(
         context: context,
@@ -183,22 +213,31 @@ class _AddressBookPageState extends State<AddressBookPage> {
             actions: [
               TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
               FilledButton(
-                onPressed: selectedLocation == null
+                onPressed: selectedLocation == null || saving
                     ? null
                     : () async {
-                        await addresses.add({
-                          'label': 'منزل',
-                          'building': building.text.trim(),
-                          'floor': floor.text.trim(),
-                          'apartment': apartment.text.trim(),
-                          'landmark': landmark.text.trim(),
-                          'location': GeoPoint(selectedLocation!.latitude, selectedLocation!.longitude),
-                          'is_default': false,
-                          'created_at': FieldValue.serverTimestamp(),
-                        });
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                        setDialogState(() => saving = true);
+                        try {
+                          await addresses.add({
+                            'label': 'منزل',
+                            'building': building.text.trim(),
+                            'floor': floor.text.trim(),
+                            'apartment': apartment.text.trim(),
+                            'landmark': landmark.text.trim(),
+                            'location': GeoPoint(selectedLocation!.latitude, selectedLocation!.longitude),
+                            'is_default': false,
+                            'created_at': FieldValue.serverTimestamp(),
+                          }).timeout(const Duration(seconds: 15));
+                          if (dialogContext.mounted) Navigator.pop(dialogContext);
+                        } catch (_) {
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() => saving = false);
+                          ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(content: Text('تعذر حفظ العنوان الآن. تحقق من الاتصال وحاول مجددًا.')));
+                        }
                       },
-                child: const Text('حفظ'),
+                child: saving
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('حفظ'),
               ),
             ],
           ),
@@ -210,6 +249,20 @@ class _AddressBookPageState extends State<AddressBookPage> {
       apartment.dispose();
       landmark.dispose();
     }
+  }
+
+  Future<void> _selectOrUpdateLocation(QueryDocumentSnapshot<Map<String, dynamic>> document) async {
+    final data = document.data();
+    final current = data['location'] as GeoPoint?;
+    if (current != null) {
+      if (mounted) Navigator.pop(context, {'address_id': document.id, ...data});
+      return;
+    }
+    final picked = await _pickLocation();
+    if (picked == null) return;
+    final location = GeoPoint(picked.latitude, picked.longitude);
+    await document.reference.update({'location': location});
+    if (mounted) Navigator.pop(context, {'address_id': document.id, ...data, 'location': location});
   }
 
   @override
@@ -229,8 +282,17 @@ class _AddressBookPageState extends State<AddressBookPage> {
                   subtitle: Text('${x['landmark'] ?? ''}${location == null ? '\nالموقع غير محدد' : ''}'),
                   isThreeLine: location == null,
                   leading: Icon(location == null ? Icons.location_searching : Icons.location_on),
-                  trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => d.reference.delete()),
-                  onTap: location == null ? null : () => Navigator.pop(context, {'address_id': d.id, ...x}),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(icon: const Icon(Icons.edit_location_alt), onPressed: () async {
+                        final picked = await _pickLocation(initialLocation: location == null ? null : LatLng(location.latitude, location.longitude));
+                        if (picked != null) await d.reference.update({'location': GeoPoint(picked.latitude, picked.longitude)});
+                      }),
+                      IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => d.reference.delete()),
+                    ],
+                  ),
+                  onTap: () => _selectOrUpdateLocation(d),
                 );
               }).toList(),
             );

@@ -91,9 +91,19 @@ class _ProductsPageState extends State<ProductsPage> {
     final userSnap = await FirebaseFirestore.instance.collection('users').doc(uid).get();
     final choice = await showPaymentSheet(context, total, userSnap.data() ?? {});
     if (choice == null) return;
+    final selectedAddress = Map<String, dynamic>.from(address!);
+    final selectedLocation = selectedAddress['location'] as GeoPoint?;
+    if (selectedLocation == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('حدد موقع التوصيل من الخريطة أو GPS أولاً')));
+      return;
+    }
+    selectedAddress['location'] = {
+      'latitude': selectedLocation.latitude,
+      'longitude': selectedLocation.longitude,
+    };
     final payload = <String, dynamic>{
         'vendor_id': widget.vendorId, 'zone_id': widget.zoneId, 'items': cart.values.toList(), 'coupon_code': couponCode,
-        'delivery_address': address, 'payment_method': choice.method, 'wallet_amount': choice.walletAmount,
+        'delivery_address': selectedAddress, 'payment_method': choice.method, 'wallet_amount': choice.walletAmount,
         'loyalty_points': choice.loyaltyPoints, 'cash_change_for': choice.cashChangeFor, 'idempotency_key': pendingIdempotencyKey,
       };
     try {
