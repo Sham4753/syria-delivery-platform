@@ -603,6 +603,9 @@ exports.createOrder = onCall(async (data, context) => {
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
       created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
     });
+    if (process.env.FUNCTIONS_EMULATOR === 'true' && process.env.SMOKE_FAIL_AFTER_ORDER_WRITE === '1' && data?.__smoke_fail_after_order_write === true) {
+      throw new HttpsError('internal', 'اختبار ذريّة محلي فقط');
+    }
     if (walletUsed > 0 || requestedPoints > 0) {
       tx.update(userRef, {wallet_balance: FieldValue.increment(-walletUsed), loyalty_points: FieldValue.increment(-requestedPoints), updated_at: FieldValue.serverTimestamp()});
       if (walletUsed > 0) tx.create(userRef.collection('wallet_ledger').doc(), {label: 'دفع الطلب ' + orderRef.id.slice(0, 6), amount: walletUsed, unit: 'ل.س', direction: 'debit', order_id: orderRef.id, created_at: FieldValue.serverTimestamp()});

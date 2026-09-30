@@ -1,4 +1,5 @@
 const admin = require('../functions/node_modules/firebase-admin');
+const {createHash} = require('crypto');
 
 const host = process.env.EMULATOR_HOST || '127.0.0.1';
 const projectId = process.env.GCLOUD_PROJECT || 'demo-syria-delivery';
@@ -53,6 +54,22 @@ function assertRejected(result, status, message, label) {
 
 async function orderCount(customerId) {
   return (await db.collection('orders').where('customer_id', '==', customerId).get()).size;
+}
+
+async function assertCustomerOrderQueryWorks(idToken, customerId) {
+  const response = await fetch(`${firestoreUrl}:runQuery`, {
+    method: 'POST',
+    headers: {'content-type': 'application/json', authorization: `Bearer ${idToken}`},
+    body: JSON.stringify({structuredQuery: {
+      from: [{collectionId: 'orders'}],
+      where: {fieldFilter: {field: {fieldPath: 'customer_id'}, op: 'EQUAL', value: {stringValue: customerId}}},
+      limit: 100,
+    }}),
+  });
+  const result = await response.json();
+  if (!response.ok || !Array.isArray(result) || !result.some((item) => item.document?.fields?.customer_id?.stringValue === customerId)) {
+    throw new Error(`customer-scoped order query failed: ${response.status} ${JSON.stringify(result)}`);
+  }
 }
 
 async function assertDirectOrderWriteDenied(idToken, documentId) {
@@ -130,6 +147,18 @@ async function main() {
   const order = await callCreateOrder(headers, baseData);
   if (!order.response.ok || order.body.error) throw new Error(`createOrder failed: ${order.response.status} ${JSON.stringify(order.body)}`);
 
+  await assertCustomerOrderQueryWorks(auth.idToken, auth.localId);
+
+  if (process.env.SMOKE_ATOMICITY_TEST === '1') {
+    const atomicKey = `smoke-order-atomic-failure-${runId}`;
+    const atomicData = {...baseData, idempotency_key: atomicKey, __smoke_fail_after_order_write: true};
+    const atomicResult = await callCreateOrder(headers, atomicData);
+    assertRejected(atomicResult, 'INTERNAL', 'اختبار ذريّة', 'atomicity injected failure');
+    const atomicOrder = await db.collection('orders').where('idempotency_key', '==', atomicKey).get();
+    const atomicMarker = await db.doc(`order_idempotency/${auth.localId}_${createHash('sha256').update(atomicKey).digest('hex').slice(0, 32)}`).get();
+    if (!atomicOrder.empty || atomicMarker.exists) throw new Error('atomicity failure left order or idempotency marker behind');
+  }
+
   const otherCustomerRead = await fetch(`${firestoreUrl}/orders/${order.body.result.order_id}`, {
     headers: {authorization: `Bearer ${otherCustomerAuth.idToken}`},
   });
@@ -185,7 +214,8 @@ async function main() {
     checks: [
       'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
-      'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency',
+      'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency', 'customer_scoped_order_query',
+      ...(process.env.SMOKE_ATOMICITY_TEST === '1' ? ['atomicity_injected_failure_no_artifacts'] : []),
     ],
   }, null, 2));
 }
