@@ -443,7 +443,8 @@ exports.cancelOrder = onCall(async (data, context) => {
   const userRef = db.doc(`users/${context.auth.uid}`);
   const eventRef = orderRef.collection('events').doc();
   await db.runTransaction(async (tx) => {
-    const orderSnap = await tx.get(orderRef);
+    const [orderSnap, userSnap] = await Promise.all([tx.get(orderRef), tx.get(userRef)]);
+    if (!userSnap.exists || userSnap.data()?.role !== 'customer') throw new HttpsError('permission-denied', 'إلغاء الطلبات متاح للعملاء فقط');
     if (!orderSnap.exists) throw new HttpsError('not-found', 'الطلب غير موجود');
     const order = orderSnap.data() || {};
     if (order.customer_id !== context.auth.uid || order.status !== 'pending') throw new HttpsError('failed-precondition', 'لا يمكن إلغاء الطلب في حالته الحالية');

@@ -96,6 +96,10 @@ async function orderCount(idToken, customerId) {
   return (await customerOrderQuery(idToken, customerId)).length;
 }
 
+async function resetEmulatorRateLimit(uid) {
+  if (db) await db.doc(`order_rate_limits/${uid}`).delete();
+}
+
 async function assertCustomerOrderQueryWorks(idToken, customerId) {
   const result = await customerOrderQuery(idToken, customerId);
   if (!result.some((item) => item.document?.fields?.customer_id?.stringValue === customerId)) {
@@ -130,7 +134,7 @@ async function main() {
   const headers = {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`};
   const vendorHeaders = {'content-type': 'application/json', authorization: `Bearer ${vendorAuth.idToken}`};
   const runId = Date.now().toString();
-  if (db) await db.doc(`order_rate_limits/${auth.localId}`).delete();
+  await resetEmulatorRateLimit(auth.localId);
   const baseData = {
     vendor_id: 'restaurant-01', zone_id: 'zone-1', coupon_code: '', idempotency_key: 'smoke-order-20260920-01',
     items: [
@@ -143,6 +147,11 @@ async function main() {
     },
     payment_method: 'cash_on_delivery', wallet_amount: 0, loyalty_points: 0, cash_change_for: 100000,
   };
+
+  assertRejected(await callCancelOrder({'content-type': 'application/json'}, {order_id: ''}), 'UNAUTHENTICATED', 'تسجيل الدخول', 'cancel unauthenticated caller');
+  assertRejected(await callCancelOrder(vendorHeaders, {order_id: 'missing'}), 'PERMISSION_DENIED', 'للعملاء فقط', 'cancel non-customer role');
+  assertRejected(await callCancelOrder(headers, {order_id: ''}), 'INVALID_ARGUMENT', 'رقم الطلب مطلوب', 'cancel invalid order id');
+  assertRejected(await callCancelOrder(headers, {order_id: 'missing-order-for-smoke'}), 'NOT_FOUND', 'الطلب غير موجود', 'cancel missing order');
 
   assertRejected(await callCreateOrder({'content-type': 'application/json'}, baseData), 'UNAUTHENTICATED', 'تسجيل الدخول', 'unauthenticated caller');
   assertRejected(await callCreateOrder(vendorHeaders, {...baseData, idempotency_key: `smoke-order-vendor-${runId}`}), 'PERMISSION_DENIED', 'للعملاء فقط', 'non-customer role');
@@ -249,6 +258,46 @@ async function main() {
   }
   assertRejected(await callCancelOrder(headers, {order_id: cancelId, reason: 'repeat'}), 'FAILED_PRECONDITION', 'لا يمكن إلغاء الطلب', 'cancellation after terminal status');
 
+  const advancedStatusChecks = [];
+  let hybridRefundCheck = false;
+  if (db) {
+    await resetEmulatorRateLimit(auth.localId);
+    const advancedOrder = await callCreateOrder(headers, {...baseData, idempotency_key: `smoke-order-advanced-status-${runId}`});
+    if (!advancedOrder.response.ok || advancedOrder.body.error) throw new Error(`advanced-status fixture failed: ${JSON.stringify(advancedOrder.body)}`);
+    const advancedId = advancedOrder.body.result.order_id;
+    for (const status of ['preparing', 'picked_up', 'on_the_way', 'delivering', 'delivered']) {
+      await db.doc(`orders/${advancedId}`).update({status});
+      const rejected = await callCancelOrder(headers, {order_id: advancedId, reason: `status ${status}`});
+      assertRejected(rejected, 'FAILED_PRECONDITION', 'لا يمكن إلغاء الطلب', `cancel advanced status ${status}`);
+      const unchanged = await db.doc(`orders/${advancedId}`).get();
+      if (unchanged.data()?.status !== status) throw new Error(`status changed after rejected cancellation: ${status}`);
+      advancedStatusChecks.push(status);
+    }
+
+    await resetEmulatorRateLimit(auth.localId);
+    const hybridData = {...baseData, idempotency_key: `smoke-order-hybrid-cancel-${runId}`, payment_method: 'hybrid', wallet_amount: 10000, loyalty_points: 10};
+    const hybridOrder = await callCreateOrder(headers, hybridData);
+    if (!hybridOrder.response.ok || hybridOrder.body.error) throw new Error(`hybrid fixture failed: ${JSON.stringify(hybridOrder.body)}`);
+    const hybridId = hybridOrder.body.result.order_id;
+    const beforeRefund = (await db.doc(`users/${auth.localId}`).get()).data() || {};
+    const cancelRace = await Promise.all([callCancelOrder(headers, {order_id: hybridId, reason: 'race 1'}), callCancelOrder(headers, {order_id: hybridId, reason: 'race 2'})]);
+    const successfulCancels = cancelRace.filter((result) => result.response.ok && !result.body.error);
+    const rejectedCancels = cancelRace.filter((result) => result.body.error);
+    if (successfulCancels.length !== 1 || rejectedCancels.length !== 1) throw new Error(`cancel concurrency expected one success/one rejection: ${JSON.stringify(cancelRace.map((result) => result.body))}`);
+    assertRejected(rejectedCancels[0], 'FAILED_PRECONDITION', 'لا يمكن إلغاء الطلب', 'cancel concurrency rejection');
+    const afterRefund = (await db.doc(`users/${auth.localId}`).get()).data() || {};
+    const hybridSnap = await db.doc(`orders/${hybridId}`).get();
+    const hybrid = hybridSnap.data() || {};
+    if (Number(afterRefund.wallet_balance) - Number(beforeRefund.wallet_balance) !== Number(hybrid.wallet_refunded) ||
+        Number(afterRefund.loyalty_points) - Number(beforeRefund.loyalty_points) !== Number(hybrid.loyalty_points_refunded) ||
+        Number(hybrid.wallet_refunded) !== 10000 || Number(hybrid.loyalty_points_refunded) !== 10 ||
+        !(await db.doc(`users/${auth.localId}/wallet_ledger/refund_${hybridId}`).get()).exists ||
+        !(await db.doc(`users/${auth.localId}/loyalty_ledger/${hybridId}`).get()).exists) {
+      throw new Error(`hybrid cancellation refund was not applied exactly once: ${JSON.stringify({beforeRefund, afterRefund, hybrid})}`);
+    }
+    hybridRefundCheck = true;
+  }
+
   const replayCountBefore = await orderCount(auth.idToken, auth.localId);
   const replay = await callCreateOrder(headers, baseData);
   const replayCountAfter = await orderCount(auth.idToken, auth.localId);
@@ -277,9 +326,11 @@ async function main() {
     customer: customerEmail,
     vendor: 'restaurant-01',
     checks: [
-      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_direct_write_denied', 'customer_cancel_callable_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
+      'unauthenticated_rejected', 'non_customer_rejected', 'cancel_unauthenticated_rejected', 'cancel_non_customer_rejected', 'cancel_invalid_id_rejected', 'cancel_missing_order_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_direct_write_denied', 'customer_cancel_callable_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency', 'customer_scoped_order_query',
+      ...(advancedStatusChecks.length ? ['customer_cancel_advanced_statuses_denied'] : []),
+      ...(hybridRefundCheck ? ['hybrid_cancel_refund_once_under_concurrency'] : []),
       ...(process.env.SMOKE_ATOMICITY_TEST === '1' ? ['atomicity_injected_failure_no_artifacts'] : []),
     ],
   }, null, 2));
