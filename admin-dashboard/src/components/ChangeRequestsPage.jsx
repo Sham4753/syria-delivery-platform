@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { collection, limit, onSnapshot, query, where } from 'firebase/firestore'
+import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '../firebase'
 import { Button, EmptyState, Field, Toast, useToast } from './ui'
@@ -13,11 +13,16 @@ export default function ChangeRequestsPage() {
   const [notes, setNotes] = useState({})
   const [busy, setBusy] = useState('')
   const { toast, notify } = useToast()
-  const items = useMemo(() => [...pending, ...reviewed].sort((a, b) => (b.requested_at?.seconds || 0) - (a.requested_at?.seconds || 0)), [pending, reviewed])
+  const items = useMemo(() => {
+    const byId = new Map()
+    pending.forEach(item => byId.set(item.id, item))
+    reviewed.forEach(item => byId.set(item.id, item))
+    return [...byId.values()].sort((a, b) => (b.reviewed_at?.seconds || b.requested_at?.seconds || 0) - (a.reviewed_at?.seconds || a.requested_at?.seconds || 0))
+  }, [pending, reviewed])
 
   useEffect(() => {
-    const pendingQuery = query(collection(db, 'change_requests'), where('status', '==', 'pending'), limit(100))
-    const reviewedQuery = query(collection(db, 'change_requests'), where('status', 'in', ['approved', 'rejected']), limit(50))
+    const pendingQuery = query(collection(db, 'change_requests'), where('status', '==', 'pending'), orderBy('requested_at', 'desc'), limit(100))
+    const reviewedQuery = query(collection(db, 'change_requests'), where('status', 'in', ['approved', 'rejected']), orderBy('reviewed_at', 'desc'), limit(50))
     const unsubscribePending = onSnapshot(pendingQuery, snapshot => setPending(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))), () => notify('تعذر تحميل الطلبات المعلقة', 'error'))
     const unsubscribeReviewed = onSnapshot(reviewedQuery, snapshot => setReviewed(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))), () => notify('تعذر تحميل سجل طلبات الفكة', 'error'))
     return () => { unsubscribePending(); unsubscribeReviewed() }
