@@ -11,31 +11,10 @@ service cloud.firestore {
       let o = get(/databases/$(database)/documents/orders/$(orderId)).data;
       return signedIn() && (o.customer_id == request.auth.uid || o.courier_id == request.auth.uid || vendorOwner(o.vendor_id) || admin());
     }
-    function claimable() {
-      return signedIn() && role('courier') && resource.data.courier_id == null
-        && resource.data.status in ['pending', 'preparing', 'ready_for_pickup']
-        && request.resource.data.courier_id == request.auth.uid
-        && request.resource.data.status == resource.data.status
-        && request.resource.data.zone_id == get(/databases/$(database)/documents/couriers/$(request.auth.uid)).data.zone_id
-        && get(/databases/$(database)/documents/courier_wallets/$(request.auth.uid)).data.debt < get(/databases/$(database)/documents/courier_wallets/$(request.auth.uid)).data.credit_limit;
-    }
     function customerCancel() {
       return signedIn() && resource.data.customer_id == request.auth.uid && resource.data.status == 'pending'
         && request.resource.data.status == 'cancelled' && request.resource.data.cancelled_by == 'customer'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelled_by', 'cancellation_reason', 'updated_at']);
-    }
-    function vendorStatusChange() {
-      return vendorOwner(resource.data.vendor_id) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'prep_minutes', 'cancelled_by', 'cancellation_reason', 'updated_at'])
-        && ((resource.data.status == 'pending' && request.resource.data.status == 'preparing')
-          || (resource.data.status == 'preparing' && request.resource.data.status == 'ready_for_pickup')
-          || (resource.data.status in ['pending', 'preparing'] && request.resource.data.status == 'cancelled' && request.resource.data.cancelled_by == 'vendor'));
-    }
-    function courierStatusChange() {
-      return signedIn() && role('courier') && resource.data.courier_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated_at'])
-        && ((resource.data.status == 'ready_for_pickup' && request.resource.data.status == 'picked_up')
-          || (resource.data.status == 'picked_up' && request.resource.data.status == 'on_the_way')
-          );
     }
 
     match /users/{uid} {
