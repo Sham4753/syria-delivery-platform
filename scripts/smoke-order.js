@@ -40,10 +40,17 @@ async function callCreateOrder(headers, data) {
 
 function assertRejected(result, status, message, label) {
   const error = result.body?.error;
-  const actualStatus = String(error?.status || '');
-  const actualMessage = String(error?.message || '');
-  if (actualStatus === status && actualMessage.includes(message)) return;
-  throw new Error(`${label}: expected ${status}/${message}, got ${JSON.stringify(result.body)}`);
+  const normalize = (value) => String(value || '')
+    .normalize('NFC')
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const actualStatus = normalize(error?.status);
+  const actualMessage = normalize(error?.message);
+  const expectedStatus = normalize(status);
+  const expectedMessage = normalize(message);
+  if (actualStatus === expectedStatus && actualMessage.includes(expectedMessage)) return;
+  throw new Error(`${label}: expected ${expectedStatus}/${expectedMessage}, got status=${JSON.stringify(actualStatus)} message=${JSON.stringify(actualMessage)} body=${JSON.stringify(result.body)}`);
 }
 
 async function orderCount(customerId) {
