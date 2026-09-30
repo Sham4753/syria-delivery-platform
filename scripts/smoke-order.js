@@ -23,6 +23,12 @@ async function main() {
   const rejected = await fetch(callableUrl, { method: 'POST', headers, body: JSON.stringify({data: missingLocation}) });
   const rejectedBody = await rejected.json();
   if (rejected.ok || rejectedBody.error?.status !== 'INVALID_ARGUMENT') throw new Error(`createOrder accepted missing location: ${JSON.stringify(rejectedBody)}`);
+  const outsideZone = {...baseData, idempotency_key: 'smoke-order-outside-zone-01', delivery_address: {...baseData.delivery_address, location: { latitude: 40, longitude: 40 }}};
+  const outside = await fetch(callableUrl, { method: 'POST', headers, body: JSON.stringify({data: outsideZone}) });
+  const outsideBody = await outside.json();
+  if (outside.ok || outsideBody.error?.status !== 'FAILED_PRECONDITION' || !String(outsideBody.error?.message || '').includes('خارج منطقة التوصيل')) {
+    throw new Error(`createOrder accepted outside-zone location: ${JSON.stringify(outsideBody)}`);
+  }
   const order = await fetch(callableUrl, { method: 'POST', headers, body: JSON.stringify({data: baseData}) });
   const body = await order.json();
   if (!order.ok || body.error) throw new Error(`createOrder failed: ${order.status} ${JSON.stringify(body)}`);
