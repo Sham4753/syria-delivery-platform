@@ -9,6 +9,20 @@ const {normalizePoint, pickZone} = require('./geo');
 
 initializeApp();
 const db = getFirestore();
+const ZONES_GEO_CACHE_MS = 60 * 1000;
+let zonesGeoCache = {expiresAt: 0, zones: null};
+
+async function loadActiveZonesGeo() {
+  if (zonesGeoCache.zones && zonesGeoCache.expiresAt > Date.now()) return zonesGeoCache.zones;
+  const snapshot = await db.collection('zones_geo').get();
+  const zones = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    polygon: doc.data()?.polygon,
+    active: doc.data()?.is_active !== false,
+  }));
+  zonesGeoCache = {expiresAt: Date.now() + ZONES_GEO_CACHE_MS, zones};
+  return zones;
+}
 
 // Customers can read only this deliberately small, public-safe projection.
 // Keep operational/vendor-admin fields exclusively in `vendors`.
@@ -471,12 +485,7 @@ exports.createOrder = onCall(async (data, context) => {
   const deliveryPoint = normalizePoint(address.location);
   if (!deliveryPoint) throw new HttpsError('invalid-argument', 'يجب تحديد موقع تسليم صالح من الخريطة أو GPS');
   address.location = deliveryPoint;
-  const geoSnap = await db.collection('zones_geo').get();
-  const zones = geoSnap.docs.map((doc) => ({
-    id: doc.id,
-    polygon: doc.data()?.polygon,
-    active: doc.data()?.is_active !== false,
-  }));
+  const zones = await loadActiveZonesGeo();
   if (pickZone(deliveryPoint, zones) !== zoneId) {
     throw new HttpsError('failed-precondition', 'نقطة التسليم خارج منطقة التوصيل المحددة');
   }

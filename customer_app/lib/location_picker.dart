@@ -38,6 +38,7 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
     setState(() {
       locating = true;
       locationError = null;
+      permissionDeniedForever = false;
     });
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
@@ -78,6 +79,12 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
   }
 
   @override
+  void dispose() {
+    mapController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           title: const Text('حدد موقع التوصيل'),
@@ -106,7 +113,7 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
                   children: [
                     TileLayer(
                       urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.syria.delivery.customer',
+                      userAgentPackageName: 'com.mycompany.mimoapp',
                     ),
                     MarkerLayer(
                       markers: [
