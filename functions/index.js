@@ -9,29 +9,35 @@ const {normalizePoint, pickZone} = require('./geo');
 
 initializeApp();
 const db = getFirestore();
-const ZONES_GEO_CACHE_MS = 60 * 1000;
-let zonesGeoCache = {expiresAt: 0, zones: null, loading: null};
+// تعطيل منطقة أو تعديل مضلعها قد يتأخر حتى 60 ثانية؛ اضبط ZONES_GEO_CACHE_MS=0 للاختبارات.
+const configuredZonesGeoCacheMs = Number(process.env.ZONES_GEO_CACHE_MS ?? 60 * 1000);
+const ZONES_GEO_CACHE_MS = Number.isFinite(configuredZonesGeoCacheMs) ? Math.max(0, configuredZonesGeoCacheMs) : 60 * 1000;
+let zonesGeoCache = {generation: 0, expiresAt: 0, zones: null, loading: null};
 
 async function loadZonesGeo() {
   if (zonesGeoCache.zones && zonesGeoCache.expiresAt > Date.now()) return zonesGeoCache.zones;
   if (zonesGeoCache.loading) return zonesGeoCache.loading;
-  zonesGeoCache.loading = db.collection('zones_geo').get().then((snapshot) => {
+  const generation = zonesGeoCache.generation;
+  const loading = db.collection('zones_geo').get().then((snapshot) => {
     const zones = snapshot.docs.map((doc) => ({
       id: doc.id,
       polygon: doc.data()?.polygon,
       active: doc.data()?.is_active !== false,
     }));
-    zonesGeoCache = {expiresAt: Date.now() + ZONES_GEO_CACHE_MS, zones, loading: null};
+    if (zonesGeoCache.generation === generation) {
+      zonesGeoCache = {generation, expiresAt: Date.now() + ZONES_GEO_CACHE_MS, zones, loading: null};
+    }
     return zones;
   }).catch((error) => {
-    zonesGeoCache.loading = null;
+    if (zonesGeoCache.generation === generation) zonesGeoCache.loading = null;
     throw error;
   });
-  return zonesGeoCache.loading;
+  zonesGeoCache.loading = loading;
+  return loading;
 }
 
 function clearZonesGeoCache() {
-  zonesGeoCache = {expiresAt: 0, zones: null, loading: null};
+  zonesGeoCache = {generation: zonesGeoCache.generation + 1, expiresAt: 0, zones: null, loading: null};
 }
 
 if (process.env.NODE_ENV === 'test') exports.__clearZonesGeoCache = clearZonesGeoCache;
