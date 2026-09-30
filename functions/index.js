@@ -6,6 +6,7 @@ const {getFirestore, FieldValue} = require('firebase-admin/firestore');
 const {getMessaging} = require('firebase-admin/messaging');
 const {createHash, randomInt} = require('crypto');
 const {normalizePoint, pickZone} = require('./geo');
+const {prepareCreateOrderPayload} = require('./atomicity-guard');
 
 initializeApp();
 const db = getFirestore();
@@ -493,13 +494,14 @@ exports.topUpWallet = onCall(async (data, context) => {
 exports.createOrder = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const customerId = context.auth.uid;
-  const payload = data && typeof data === 'object' && !Array.isArray(data) ? {...data} : {};
-  const smokeFields = Object.keys(payload).filter((key) => key.startsWith('__smoke'));
   const emulatorOnly = process.env.FUNCTIONS_EMULATOR === 'true';
-  if (smokeFields.length && !emulatorOnly) throw new HttpsError('invalid-argument', 'حقول الاختبار المحلي غير مسموحة');
-  if (smokeFields.some((key) => key !== '__smoke_fail_after_order_write')) throw new HttpsError('invalid-argument', 'حقل اختبار محلي غير معروف');
-  const smokeFailAfterOrderWrite = payload.__smoke_fail_after_order_write === true;
-  delete payload.__smoke_fail_after_order_write;
+  let payload;
+  let smokeFailAfterOrderWrite;
+  try {
+    ({payload, shouldInjectFailure: smokeFailAfterOrderWrite} = prepareCreateOrderPayload(data, {functionsEmulator: emulatorOnly}));
+  } catch (error) {
+    throw new HttpsError(error.code || 'invalid-argument', error.message);
+  }
   const vendorId = String(payload.vendor_id || '');
   const zoneId = String(payload.zone_id || '');
   const address = payload.delivery_address;
