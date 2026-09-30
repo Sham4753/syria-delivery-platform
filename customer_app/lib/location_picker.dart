@@ -73,7 +73,9 @@ class _LocationPickerPageState extends State<LocationPickerPage> {
         locating = false;
         locationError = error is TimeoutException
             ? 'تعذر الحصول على الموقع خلال المهلة المحددة'
-            : error.toString().replaceFirst('Bad state: ', '');
+            : error is StateError
+                ? error.message
+                : 'تعذر الحصول على موقعك. تحقق من إعدادات الموقع وحاول مجددًا.';
       });
     }
   }
