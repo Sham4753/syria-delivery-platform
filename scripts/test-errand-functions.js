@@ -146,6 +146,11 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     await fns.requestChangeToWallet({order_id: 'o5'}, ctx('cour'));
     const rj = await fns.reviewChangeRequest({order_id: 'o5', decision: 'reject', note: 'غير صحيح'}, ctx('admin'));
     assert.strictEqual(rj.status, 'rejected'); assert.strictEqual(db.store.get('users/cust').wallet_balance, 20000, 'reject credits nothing');
+
+    put('orders/o6', delivered({cash_due: 5000, cash_change_for: 100000}));
+    const manual = await fns.requestChangeToWallet({order_id: 'o6'}, ctx('cour'));
+    assert.strictEqual(manual.status, 'pending');
+    assert.strictEqual(manual.needs_manual_review, true, 'large change remains reviewable');
   }
   console.log('errand function tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -18,6 +18,7 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
     const now = Date.now();
     const current = quoteRate.get(uid);
     if (!current || now - current.windowStart >= QUOTE_RATE_WINDOW_MS) {
+      if (current) quoteRate.delete(uid);
       quoteRate.set(uid, {windowStart: now, count: 1});
       return;
     }
@@ -141,12 +142,12 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
       const configSnap = await tx.get(db.doc('system_config/main'));
       const configuredMax = Number(configSnap.data()?.max_change_amount || 0);
       const maxChange = configuredMax > 0 ? configuredMax : cashDue * 10;
-      if (amount > maxChange) throw new HttpsError('failed-precondition', 'مبلغ الفكة أكبر من الحد المسموح ويحتاج مراجعة يدوية');
+      const needsManualReview = amount > maxChange;
       tx.create(requestRef, {
         order_id: orderId, courier_id: uid, customer_id: String(order.customer_id || ''), amount, cash_due: cashDue, cash_change_for: cashChangeFor,
-        courier_claimed_amount: claimed, status: 'pending', requested_at: FieldValue.serverTimestamp(),
+        courier_claimed_amount: claimed, needs_manual_review: needsManualReview, status: 'pending', requested_at: FieldValue.serverTimestamp(),
       });
-      return {order_id: orderId, amount, status: 'pending'};
+      return {order_id: orderId, amount, status: 'pending', needs_manual_review: needsManualReview};
     });
   });
 
