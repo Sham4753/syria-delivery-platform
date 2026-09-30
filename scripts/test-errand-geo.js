@@ -23,6 +23,8 @@ const L = [P(0, 0), P(0, 10), P(5, 10), P(5, 5), P(10, 5), P(10, 0)];
 assert.ok(pointInPolygon(P(2, 8), L));
 assert.ok(pointInPolygon(P(8, 2), L));
 assert.ok(!pointInPolygon(P(8, 8), L), 'the concave notch is outside');
+assert.ok(pointInPolygon(P(33, 36.5), square), 'polygon boundary is inclusive');
+assert.ok(pointInPolygon(P(33, 36), square), 'polygon vertex is inclusive');
 
 // اختيار المنطقة: الأصغر عند التداخل، وتجاهل غير النشطة، وتجاهل المضلعات التالفة
 const zones = [

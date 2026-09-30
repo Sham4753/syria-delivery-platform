@@ -21,6 +21,16 @@ function normalizePolygon(raw) {
 }
 
 // Ray casting: x = خط الطول، y = خط العرض.
+function pointOnSegment(point, a, b) {
+  const cross = (point.longitude - a.longitude) * (b.latitude - a.latitude) -
+    (point.latitude - a.latitude) * (b.longitude - a.longitude);
+  if (Math.abs(cross) > 1e-10) return false;
+  return point.longitude >= Math.min(a.longitude, b.longitude) - 1e-10 &&
+    point.longitude <= Math.max(a.longitude, b.longitude) + 1e-10 &&
+    point.latitude >= Math.min(a.latitude, b.latitude) - 1e-10 &&
+    point.latitude <= Math.max(a.latitude, b.latitude) + 1e-10;
+}
+
 function pointInPolygon(point, polygon) {
   const x = point.longitude;
   const y = point.latitude;
@@ -28,6 +38,7 @@ function pointInPolygon(point, polygon) {
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const xi = polygon[i].longitude; const yi = polygon[i].latitude;
     const xj = polygon[j].longitude; const yj = polygon[j].latitude;
+    if (pointOnSegment(point, polygon[j], polygon[i])) return true;
     const crosses = (yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
     if (crosses) inside = !inside;
   }
