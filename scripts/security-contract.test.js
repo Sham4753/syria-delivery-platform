@@ -7,6 +7,8 @@ const errands = fs.readFileSync(path.join(root, 'functions', 'errands.js'), 'utf
 const errandScreen = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'screens', 'errand_screen.dart'), 'utf8');
 const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
 const customer = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'common.dart'), 'utf8');
+const adminSettings = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'OperationsPages.jsx'), 'utf8');
+const changeRequests = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'ChangeRequestsPage.jsx'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(`SECURITY CONTRACT FAILED: ${message}`);
@@ -31,6 +33,9 @@ assert(/requireRole\(adminId, \['super_admin'\]\)/.test(reviewBlock) && /wallet_
 assert(/match \/change_requests\/{orderId}[^\n]*allow write: if false;/.test(rules), 'change_requests must be callable-only');
 assert(!/['"]delivery_fee['"]\s*:/.test(errandScreen) && !/['"]zone_id['"]\s*:/.test(errandScreen), 'customer errand screen must not send fee or zone');
 assert(/maxChange/.test(functions), 'createOrder must cap the cash change amount');
+assert(/max_change_amount: \{type: 'number'/.test(functions) && /max_change_amount: Number\(config\.max_change_amount\)/.test(adminSettings), 'max_change_amount must be allowlisted and published from admin settings');
+assert(/where\('status', '==', 'pending'\)/.test(changeRequests) && /limit\(100\)/.test(changeRequests) && /limit\(50\)/.test(changeRequests), 'change request dashboard must bound pending and reviewed reads');
+assert(/window\.confirm/.test(changeRequests) && /courier_claimed_amount/.test(changeRequests), 'change request approval must confirm and show claimed amount');
 assert(/messaging\/registration-token-not-registered/.test(functions), 'notification failure must not abort accounting');
 assert(/request\.resource\.data\.role == 'customer'/.test(rules), 'self-created users must be customers only');
 assert(/request\.resource\.data\.keys\(\)\.hasOnly/.test(rules), 'user creation fields must be allowlisted');

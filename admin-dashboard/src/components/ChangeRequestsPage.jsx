@@ -1,28 +1,37 @@
-import { useEffect, useState } from 'react'
-import { collection, onSnapshot } from 'firebase/firestore'
+import { useEffect, useMemo, useState } from 'react'
+import { collection, limit, onSnapshot, query, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '../firebase'
 import { Button, EmptyState, Field, Toast, useToast } from './ui'
 
 const money = value => `${Number(value || 0).toLocaleString('ar-SY')} ل.س`
+const statusLabel = { pending: 'بانتظار المراجعة', approved: 'معتمد', rejected: 'مرفوض' }
 
 export default function ChangeRequestsPage() {
-  const [items, setItems] = useState([])
+  const [pending, setPending] = useState([])
+  const [reviewed, setReviewed] = useState([])
   const [notes, setNotes] = useState({})
   const [busy, setBusy] = useState('')
   const { toast, notify } = useToast()
+  const items = useMemo(() => [...pending, ...reviewed].sort((a, b) => (b.requested_at?.seconds || 0) - (a.requested_at?.seconds || 0)), [pending, reviewed])
 
-  useEffect(() => onSnapshot(
-    collection(db, 'change_requests'),
-    snapshot => setItems(snapshot.docs.map(item => ({ id: item.id, ...item.data() })).sort((a, b) => (b.requested_at?.seconds || 0) - (a.requested_at?.seconds || 0))),
-    () => notify('تعذر تحميل طلبات تحويل الفكة', 'error'),
-  ), [notify])
+  useEffect(() => {
+    const pendingQuery = query(collection(db, 'change_requests'), where('status', '==', 'pending'), limit(100))
+    const reviewedQuery = query(collection(db, 'change_requests'), where('status', 'in', ['approved', 'rejected']), limit(50))
+    const unsubscribePending = onSnapshot(pendingQuery, snapshot => setPending(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))), () => notify('تعذر تحميل الطلبات المعلقة', 'error'))
+    const unsubscribeReviewed = onSnapshot(reviewedQuery, snapshot => setReviewed(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))), () => notify('تعذر تحميل سجل طلبات الفكة', 'error'))
+    return () => { unsubscribePending(); unsubscribeReviewed() }
+  }, [notify])
 
   const review = async (item, decision) => {
     const note = String(notes[item.id] || '').trim()
     if (decision === 'approve' && item.needs_manual_review === true && !note) {
       notify('أضف ملاحظة قبل اعتماد طلب الفكة الكبير', 'error')
       return
+    }
+    if (decision === 'approve') {
+      const confirmed = window.confirm(`تأكيد اعتماد ${money(item.amount)} للزبون ${item.customer_id || '—'} مع تسجيل التزام على المندوب ${item.courier_id || '—'}؟`)
+      if (!confirmed) return
     }
     setBusy(`${item.id}:${decision}`)
     try {
@@ -37,22 +46,26 @@ export default function ChangeRequestsPage() {
 
   return <>
     <section className="page-heading">
-      <div><p className="eyebrow">FINANCE / CHANGE REQUESTS</p><h1>طلبات تحويل الفكة</h1><p>راجع طلبات الفكة قبل إضافة رصيد للزبون وتسجيل التزام المندوب.</p></div>
+      <div><p className="eyebrow">FINANCE / CHANGE REQUESTS</p><h1>طلبات تحويل الفكة</h1><p>المعلّق: {pending.length} · السجل المعروض: {reviewed.length} طلبًا</p></div>
     </section>
     <section className="data-card">
       <table>
-        <thead><tr><th>الطلب</th><th>المبلغ</th><th>المندوب</th><th>الحالة</th><th>المراجعة</th><th>الإجراء</th></tr></thead>
-        <tbody>{items.map(item => <tr key={item.id}>
-          <td><strong>#{item.id.slice(0, 8)}</strong><br /><small>{item.customer_id || '—'}</small></td>
-          <td>{money(item.amount)}<br /><small>المبلغ المطلوب: {money(item.cash_change_for)} / المستحق: {money(item.cash_due)}</small></td>
-          <td>{item.courier_id || '—'}</td>
-          <td><span className={`badge ${item.status === 'approved' ? 'green' : item.status === 'rejected' ? 'muted' : 'blue'}`}>{item.status}</span></td>
-          <td>{item.needs_manual_review === true ? <span className="badge" title="يتطلب ملاحظة عند الاعتماد">مراجعة يدوية</span> : 'عادي'}</td>
-          <td>{item.status !== 'pending' ? <small>{item.review_note || 'تمت المراجعة'}</small> : <div className="form-grid">
-            <Field label="ملاحظة الأدمن" value={notes[item.id] || ''} onChange={event => setNotes(current => ({ ...current, [item.id]: event.target.value }))} />
-            <div className="modal-actions"><Button busy={busy === `${item.id}:approve`} onClick={() => review(item, 'approve')}>اعتماد</Button><Button variant="secondary" busy={busy === `${item.id}:reject`} onClick={() => review(item, 'reject')}>رفض</Button></div>
-          </div>}</td>
-        </tr>)}</tbody>
+        <thead><tr><th>الطلب والأطراف</th><th>الحساب المالي</th><th>الحالة</th><th>التدقيق</th><th>الإجراء</th></tr></thead>
+        <tbody>{items.map(item => {
+          const claimed = Number(item.courier_claimed_amount)
+          const calculated = Number(item.amount || 0)
+          const claimedDiffers = Number.isFinite(claimed) && Math.abs(claimed - calculated) > 0.01
+          return <tr key={item.id}>
+            <td><strong>#{item.id.slice(0, 8)}</strong><br /><small>الزبون: {item.customer_id || '—'}<br />المندوب: {item.courier_id || '—'}</small></td>
+            <td>{money(item.amount)}<br /><small>دفع الزبون بـ: {money(item.cash_change_for)} / المستحق: {money(item.cash_due)}<br />ادعاء المندوب: {Number.isFinite(claimed) ? money(claimed) : '—'}</small></td>
+            <td><span className={`badge ${item.status === 'approved' ? 'green' : item.status === 'rejected' ? 'muted' : 'blue'}`}>{statusLabel[item.status] || item.status}</span></td>
+            <td>{item.needs_manual_review === true ? <span className="badge" title="يتطلب ملاحظة عند الاعتماد">مراجعة يدوية</span> : 'عادي'}{claimedDiffers && <><br /><span className="badge" title="القيمة المدعاة تختلف عن الحساب الخادمي">فرق في الادعاء</span></>}</td>
+            <td>{item.status !== 'pending' ? <small>{item.review_note || 'تمت المراجعة'}</small> : <div className="form-grid">
+              <Field label="ملاحظة الأدمن" value={notes[item.id] || ''} onChange={event => setNotes(current => ({ ...current, [item.id]: event.target.value }))} />
+              <div className="modal-actions"><Button busy={busy === `${item.id}:approve`} onClick={() => review(item, 'approve')}>اعتماد</Button><Button variant="secondary" busy={busy === `${item.id}:reject`} onClick={() => review(item, 'reject')}>رفض</Button></div>
+            </div>}</td>
+          </tr>
+        })}</tbody>
       </table>
       {!items.length && <EmptyState>لا توجد طلبات فكة.</EmptyState>}
     </section>
