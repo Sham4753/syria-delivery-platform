@@ -501,7 +501,8 @@ exports.createOrder = onCall(async (data, context) => {
   try {
     ({payload, shouldInjectFailure: smokeFailAfterOrderWrite} = prepareCreateOrderPayload(data, {functionsEmulator: emulatorOnly}));
   } catch (error) {
-    throw new HttpsError(error.code || 'invalid-argument', error.message);
+    if (error?.code === 'invalid-argument') throw new HttpsError('invalid-argument', error.message);
+    throw new HttpsError('internal', 'تعذر إنشاء الطلب');
   }
   const vendorId = String(payload.vendor_id || '');
   const zoneId = String(payload.zone_id || '');

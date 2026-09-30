@@ -23,6 +23,7 @@ assert(/userSnap\.data\(\)\?\.role !== 'customer'/.test(functions), 'createOrder
 assert(/exports\.cancelOrder/.test(functions), 'refund-aware cancellation callable must exist');
 assert(/userSnap\.data\(\)\?\.role !== 'customer'/.test(functions), 'cancelOrder must reject non-customer roles');
 assert(/customerReferralDefaults/.test(functions), 'customer referral initialization must use the balance-preserving helper');
+assert(/error\?\.code === 'invalid-argument'/.test(functions) && /new HttpsError\('internal'/.test(functions), 'unexpected payload-guard errors must not be exposed as invalid-argument');
 assert(/exports\.createErrand|createErrand = onCall/.test(errands), 'errand callable must exist');
 assert(!/exports\.changeToWallet/.test(functions) && !/changeToWallet = onCall/.test(errands), 'old auto-credit changeToWallet must not exist');
 assert(/buildErrandFunctions/.test(functions), 'index.js must load errands.js');
