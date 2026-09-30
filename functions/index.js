@@ -532,6 +532,7 @@ exports.createOrder = onCall(async (data, context) => {
     const configRef = db.doc('system_config/main'); const [idempotencySnap, rateSnap, vendorSnap, zoneSnap, userSnap, configSnap, ...productSnaps] = await Promise.all([
       tx.get(idempotencyRef), tx.get(rateRef), tx.get(vendorRef), tx.get(zoneRef), tx.get(userRef), tx.get(configRef), ...productRefs.map((ref) => tx.get(ref)),
     ]);
+    if (!userSnap.exists || userSnap.data()?.role !== 'customer') throw new HttpsError('permission-denied', 'إنشاء الطلبات متاح للعملاء فقط');
     if (idempotencySnap.exists) {
       const previous = idempotencySnap.data() || {};
       if (previous.fingerprint !== requestFingerprint) throw new HttpsError('already-exists', 'معرف الطلب مستخدم مع بيانات مختلفة');
