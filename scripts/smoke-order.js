@@ -210,25 +210,39 @@ async function main() {
   const cancelOrder = await callCreateOrder(headers, cancelData);
   if (!cancelOrder.response.ok || cancelOrder.body.error) throw new Error(`cancel fixture order failed: ${JSON.stringify(cancelOrder.body)}`);
   const cancelId = cancelOrder.body.result.order_id;
-  const cancelUpdate = await fetch(`${firestoreUrl}/orders/${cancelId}?${new URLSearchParams([
+  const cancelFields = {
+    status: {stringValue: 'cancelled'},
+    cancelled_by: {stringValue: 'customer'},
+    cancellation_reason: {stringValue: 'smoke test'},
+    updated_at: {timestampValue: new Date().toISOString()},
+  };
+  const cancelMask = new URLSearchParams([
     ['updateMask.fieldPaths', 'status'],
     ['updateMask.fieldPaths', 'cancelled_by'],
     ['updateMask.fieldPaths', 'cancellation_reason'],
     ['updateMask.fieldPaths', 'updated_at'],
-  ])}`, {
+  ]);
+  const otherCustomerCancel = await fetch(`${firestoreUrl}/orders/${cancelId}?${cancelMask}`, {
+    method: 'PATCH',
+    headers: {'content-type': 'application/json', authorization: `Bearer ${otherCustomerAuth.idToken}`},
+    body: JSON.stringify({fields: cancelFields}),
+  });
+  await assertDirectOrderRequestDenied(otherCustomerCancel, 'other customer cancellation');
+  const cancelUpdate = await fetch(`${firestoreUrl}/orders/${cancelId}?${cancelMask}`, {
     method: 'PATCH',
     headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
-    body: JSON.stringify({fields: {
-      status: {stringValue: 'cancelled'},
-      cancelled_by: {stringValue: 'customer'},
-      cancellation_reason: {stringValue: 'smoke test'},
-      updated_at: {timestampValue: new Date().toISOString()},
-    }}),
+    body: JSON.stringify({fields: cancelFields}),
   });
   const cancelBody = await cancelUpdate.json();
   if (!cancelUpdate.ok || cancelBody.fields?.status?.stringValue !== 'cancelled') {
     throw new Error(`customer cancellation failed: ${cancelUpdate.status} ${JSON.stringify(cancelBody)}`);
   }
+  const repeatCancel = await fetch(`${firestoreUrl}/orders/${cancelId}?${cancelMask}`, {
+    method: 'PATCH',
+    headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
+    body: JSON.stringify({fields: cancelFields}),
+  });
+  await assertDirectOrderRequestDenied(repeatCancel, 'cancellation after terminal status');
 
   const replayCountBefore = await orderCount(auth.idToken, auth.localId);
   const replay = await callCreateOrder(headers, baseData);
@@ -258,7 +272,7 @@ async function main() {
     customer: customerEmail,
     vendor: 'restaurant-01',
     checks: [
-      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_allowed', 'missing_location',
+      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency', 'customer_scoped_order_query',
       ...(process.env.SMOKE_ATOMICITY_TEST === '1' ? ['atomicity_injected_failure_no_artifacts'] : []),
