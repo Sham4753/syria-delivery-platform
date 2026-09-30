@@ -110,16 +110,60 @@
       "collectionGroup": "change_requests",
       "queryScope": "COLLECTION",
       "fields": [
-        {"fieldPath": "status", "order": "ASCENDING"},
-        {"fieldPath": "requested_at", "order": "DESCENDING"}
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "requested_at",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "change_requests",
       "queryScope": "COLLECTION",
       "fields": [
-        {"fieldPath": "status", "order": "ASCENDING"},
-        {"fieldPath": "reviewed_at", "order": "DESCENDING"}
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "reviewed_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "vendor_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "delivered_at",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "courier_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],

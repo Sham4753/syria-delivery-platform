@@ -56,7 +56,7 @@ dynamic jsonSafeValue(dynamic value) {
 Future<Map<String, dynamic>> loadSystemConfig() async {
   try {
     final snapshot = await withNetworkTimeout(
-      FirebaseFirestore.instance.collection('system_config').doc('main').get(),
+      FirebaseFirestore.instance.collection('public_config').doc('main').get(),
     );
     final data = snapshot.data() ?? <String, dynamic>{};
     await cacheJson('customer.system_config', data);

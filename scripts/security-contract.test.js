@@ -57,7 +57,7 @@ assert(/messaging\/registration-token-not-registered/.test(functions), 'notifica
 assert(/request\.resource\.data\.role == 'customer'/.test(rules), 'self-created users must be customers only');
 assert(/request\.resource\.data\.keys\(\)\.hasOnly/.test(rules), 'user creation fields must be allowlisted');
 assert(/match \/public_vendors\/{vendorId}/.test(rules), 'public vendor projection rule must exist');
-assert(/match \/system_config\/{configId} \{ allow read: if configId == 'main';/.test(rules), 'guest config read must be limited to main');
+assert(/match \/system_config\/{configId} \{ allow read: if admin\(\);/.test(rules) && /match \/public_config\/{configId} \{ allow read: if configId == 'main';/.test(rules), 'private config must be admin-only and public projection limited to main');
 assert(/allow read: if resource\.data\.is_available == true \|\| admin\(\) \|\| vendorOwner\(vendorId\)/.test(rules), 'available products must be browsable by guests');
 assert(/match \/wallet_topups\/{topupId} \{ allow read: if signedIn\(\) && resource\.data\.customer_id == request\.auth\.uid; allow create: if false;/.test(rules), 'wallet topups must be callable-only');
 assert(/role\('customer'\).*request\.resource\.data\.customer_id == request\.auth\.uid/.test(rules), 'ratings must be created by customers only');

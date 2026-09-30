@@ -1,5 +1,11 @@
-const {onDocumentCreated, onDocumentWritten} = require('firebase-functions/v2/firestore');
-const {onCall, HttpsError} = require('firebase-functions/v1/https');
+const {onDocumentCreated: firestoreOnCreated, onDocumentWritten: firestoreOnWritten} = require('firebase-functions/v2/firestore');
+const triggerOptions = {region: 'europe-west1'};
+const onDocumentCreated = (path, handler) => firestoreOnCreated({...triggerOptions, document: path}, handler);
+const onDocumentWritten = (path, handler) => firestoreOnWritten({...triggerOptions, document: path}, handler);
+const functionsV1 = require('firebase-functions/v1');
+const {HttpsError} = require('firebase-functions/v1/https');
+const FUNCTION_REGION = 'europe-west1';
+const onCall = (handler) => functionsV1.region(FUNCTION_REGION).https.onCall(handler);
 const {initializeApp} = require('firebase-admin/app');
 const {getAuth} = require('firebase-admin/auth');
 const {getFirestore, FieldValue} = require('firebase-admin/firestore');
@@ -149,16 +155,21 @@ exports.sendBroadcastNotification = onCall(async (data, context) => {
   const title = String(data?.title || '').trim(); const body = String(data?.body || '').trim();
   const targetRole = String(data?.target_role || 'customer');
   if (!title || !body || !['customer', 'courier', 'vendor_admin', 'all'].includes(targetRole)) throw new HttpsError('invalid-argument', 'عنوان ونص الإشعار والفئة مطلوبة');
-  let query = db.collection('users').where('fcm_token', '!=', null).limit(500);
+  let query = db.collection('users').where('fcm_token', '!=', null).orderBy('__name__');
   if (targetRole !== 'all') query = query.where('role', '==', targetRole);
-  const snap = await query.get();
-  const tokens = snap.docs.map((d) => d.data()?.fcm_token).filter(Boolean);
-  let sent = 0;
-  for (let i = 0; i < tokens.length; i += 500) {
-    const result = await getMessaging().sendEachForMulticast({tokens: tokens.slice(i, i + 500), notification: {title, body}});
-    sent += result.successCount;
-  }
-  await db.collection('notification_logs').add({title, body, target_role: targetRole, sent, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
+  let cursor = null; let sent = 0; let recipients = 0;
+  do {
+    let page = query.limit(500); if (cursor) page = page.startAfter(cursor);
+    const snap = await page.get(); if (snap.empty) break;
+    const tokens = snap.docs.map((d) => d.data()?.fcm_token).filter(Boolean);
+    for (let i = 0; i < tokens.length; i += 500) {
+      const result = await getMessaging().sendEachForMulticast({tokens: tokens.slice(i, i + 500), notification: {title, body}});
+      sent += result.successCount;
+    }
+    recipients += tokens.length; cursor = snap.docs[snap.docs.length - 1];
+    if (snap.size < 500) break;
+  } while (cursor);
+  await db.collection('notification_logs').add({title, body, target_role: targetRole, recipients, sent, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
   return {sent};
 });
 
@@ -203,21 +214,36 @@ exports.publishSystemConfig = onCall(async (data, context) => {
     const before = currentSnap.data() || {};
     const version = Number(before.config_version || 0) + 1;
     const after = {...before, ...patch, config_version: version, updated_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()};
+    const publicConfig = Object.fromEntries(Object.entries(after).filter(([key]) => !['updated_by'].includes(key)));
     const revisionRef = db.doc(`system_config_revisions/${String(version).padStart(12, '0')}`);
     tx.set(mainRef, after, {merge: true});
+    tx.set(db.doc('public_config/main'), publicConfig, {merge: true});
     tx.create(revisionRef, {version, actor_id: context.auth.uid, reason, before, patch, after, created_at: FieldValue.serverTimestamp()});
     return {version};
   });
   return {status: 'published', ...result};
 });
 
+function isVendorOpen(vendor, now = new Date()) {
+  const hours = vendor?.opening_hours;
+  if (!hours || typeof hours !== 'object') return true;
+  const [openH, openM] = String(hours.open || '00:00').split(':').map(Number);
+  const [closeH, closeM] = String(hours.close || '23:59').split(':').map(Number);
+  if (![openH, openM, closeH, closeM].every(Number.isFinite)) return false;
+  const current = now.getHours() * 60 + now.getMinutes();
+  const open = openH * 60 + openM; const close = closeH * 60 + closeM;
+  return open <= close ? current >= open && current <= close : current >= open || current <= close;
+}
+
 const ORDER_TRANSITIONS = {
-  pending: ['preparing', 'cancelled'],
-  preparing: ['ready_for_pickup', 'cancelled'],
-  ready_for_pickup: ['picked_up'],
-  picked_up: ['on_the_way'],
-  on_the_way: ['delivered'],
+  pending: ['preparing', 'cancelled', 'failed_delivery'],
+  preparing: ['ready_for_pickup', 'cancelled', 'failed_delivery'],
+  ready_for_pickup: ['picked_up', 'cancelled', 'failed_delivery'],
+  picked_up: ['on_the_way', 'failed_delivery', 'returned'],
+  on_the_way: ['delivered', 'failed_delivery', 'returned'],
   delivered: [],
+  failed_delivery: ['returned'],
+  returned: [],
   cancelled: [],
 };
 
@@ -273,7 +299,7 @@ exports.openShift = onCall(async (data, context) => {
 
 async function calculateShiftTotals(shift) {
   const startedAt = shift.opened_at?.toDate?.() || new Date(0);
-  const delivered = db.collection('orders').where('status', '==', 'delivered').where('delivered_at', '>=', startedAt).where('delivered_at', '<=', new Date());
+  const delivered = db.collection('orders').where('status', '==', 'delivered').where(shift.owner_type === 'vendor' ? 'vendor_id' : 'courier_id', '==', shift.owner_id).where('delivered_at', '>=', startedAt).where('delivered_at', '<=', new Date());
   const snap = await delivered.get();
   let cashExpected = 0; let grossSales = 0; let orderCount = 0; let deliveryEarnings = 0;
   snap.docs.forEach((doc) => {
@@ -300,7 +326,7 @@ exports.closeShift = onCall(async (data, context) => {
     const current = await tx.get(shiftRef);
     if (!current.exists || current.data()?.status !== 'open') throw new HttpsError('failed-precondition', 'الوردية مغلقة أو غير صالحة');
     tx.update(shiftRef, {status: 'closed', counted_cash: money(countedCash), expected_cash: totals.cashExpected, variance, gross_sales: totals.grossSales, delivery_earnings: totals.deliveryEarnings, order_count: totals.orderCount, close_notes: notes, closed_by: context.auth.uid, closed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
-    tx.set(settlementRef, {shift_id: shiftId, owner_type: shift.owner_type, owner_id: shift.owner_id, vendor_id: shift.vendor_id || null, status: owner.isAdmin ? 'approved' : 'pending_approval', expected_cash: totals.cashExpected, counted_cash: money(countedCash), variance, gross_sales: totals.grossSales, delivery_earnings: totals.deliveryEarnings, order_count: totals.orderCount, created_by: context.auth.uid, created_at: FieldValue.serverTimestamp(), approved_by: owner.isAdmin ? context.auth.uid : null, approved_at: owner.isAdmin ? FieldValue.serverTimestamp() : null});
+    tx.set(settlementRef, {shift_id: shiftId, owner_type: shift.owner_type, owner_id: shift.owner_id, vendor_id: shift.vendor_id || null, status: owner.isAdmin ? 'approved' : 'pending_approval', expected_cash: totals.cashExpected, opening_cash: money(Number(shift.opening_cash || 0)), counted_cash: money(countedCash), variance, gross_sales: totals.grossSales, delivery_earnings: totals.deliveryEarnings, order_count: totals.orderCount, created_by: context.auth.uid, created_at: FieldValue.serverTimestamp(), approved_by: owner.isAdmin ? context.auth.uid : null, approved_at: owner.isAdmin ? FieldValue.serverTimestamp() : null});
     tx.delete(activeRef);
   });
   return {shift_id: shiftId, settlement_id: settlementRef.id, status: owner.isAdmin ? 'approved' : 'pending_approval', expected_cash: totals.cashExpected, counted_cash: money(countedCash), variance};
@@ -315,7 +341,13 @@ exports.approveSettlement = onCall(async (data, context) => {
     const settlement = await tx.get(settlementRef); if (!settlement.exists) throw new HttpsError('not-found', 'التسوية غير موجودة');
     if (settlement.data()?.status !== 'pending_approval') throw new HttpsError('failed-precondition', 'التسوية ليست بانتظار الاعتماد');
     tx.update(settlementRef, {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
-    tx.create(ledgerRef, {type: 'shift_settlement', direction: 'variance', amount: Number(settlement.data()?.variance || 0), settlement_id: settlementId, shift_id: settlement.data()?.shift_id, owner_type: settlement.data()?.owner_type, owner_id: settlement.data()?.owner_id, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
+    const settled = settlement.data() || {};
+    tx.create(ledgerRef, {type: 'shift_settlement', direction: 'variance', amount: money(Number(settled.variance || 0)), settlement_id: settlementId, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
+    if (settled.owner_type === 'courier' && settled.owner_id) {
+      const walletRef = db.doc(`courier_wallets/${settled.owner_id}`);
+      const remitted = Math.max(0, Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0));
+      tx.set(walletRef, {debt: FieldValue.increment(-remitted), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+    }
   });
   return {settlement_id: settlementId, status: 'approved'};
 });
@@ -341,13 +373,14 @@ exports.transitionOrderStatus = onCall(async (data, context) => {
     if (!ORDER_TRANSITIONS[current]?.includes(nextStatus)) throw new HttpsError('failed-precondition', `لا يمكن نقل الطلب من ${current} إلى ${nextStatus}`);
     if (nextStatus === 'delivered') throw new HttpsError('permission-denied', 'تأكيد التسليم يتطلب رمز OTP من العميل');
     if (user.role === 'vendor_admin' && (before.vendor_id !== user.vendor_id || !['preparing', 'ready_for_pickup', 'cancelled'].includes(nextStatus))) throw new HttpsError('permission-denied', 'انتقال الحالة غير مسموح للتاجر');
-    if (user.role === 'courier' && (before.courier_id !== uid || !['picked_up', 'on_the_way'].includes(nextStatus))) throw new HttpsError('permission-denied', 'انتقال الحالة غير مسموح للمندوب');
+    if (user.role === 'courier' && (before.courier_id !== uid || !['picked_up', 'on_the_way', 'failed_delivery', 'returned'].includes(nextStatus))) throw new HttpsError('permission-denied', 'انتقال الحالة غير مسموح للمندوب');
     if (user.role === 'super_admin' && nextStatus === 'delivered') throw new HttpsError('permission-denied', 'التسليم لا يتم من لوحة الإدارة');
     const changes = {status: nextStatus, updated_at: FieldValue.serverTimestamp(), status_changed_by: uid};
     if (prepMinutes !== null) changes.prep_minutes = prepMinutes;
-    if (nextStatus === 'cancelled') {
-      changes.cancelled_by = user.role === 'vendor_admin' ? 'vendor' : 'admin';
+    if (['cancelled', 'failed_delivery', 'returned'].includes(nextStatus)) {
+      changes.cancelled_by = user.role === 'vendor_admin' ? 'vendor' : user.role;
       changes.cancellation_reason = reason || 'بدون سبب';
+      if (nextStatus !== 'cancelled') changes.failure_reason = reason || 'تعذر التسليم';
     }
     if (nextStatus === 'ready_for_pickup') changes.ready_at = FieldValue.serverTimestamp();
     if (nextStatus === 'picked_up') changes.picked_up_at = FieldValue.serverTimestamp();
@@ -390,6 +423,9 @@ exports.claimCourierOrder = onCall(async (data, context) => {
     const order = orderSnap.data() || {}; const courier = courierSnap.data() || {}; const wallet = walletSnap.data() || {};
     if (!orderSnap.exists || !['pending', 'preparing', 'ready_for_pickup'].includes(order.status) || order.courier_id) throw new HttpsError('failed-precondition', 'الطلب لم يعد متاحاً للإسناد');
     if (courier.is_available !== true || courier.zone_id !== order.zone_id) throw new HttpsError('failed-precondition', 'المندوب غير متاح لهذه المنطقة');
+    if (Array.isArray(order.dispatch_candidates) && order.dispatch_candidates.length > 0 && !order.dispatch_candidates.includes(uid)) throw new HttpsError('permission-denied', 'لم يتم عرض هذا الطلب على المندوب');
+    const activeOrders = await db.collection('orders').where('courier_id', '==', uid).where('status', 'in', ['picked_up', 'on_the_way']).limit(3).get();
+    if (activeOrders.size >= 2) throw new HttpsError('resource-exhausted', 'وصلت إلى الحد الأقصى للطلبات النشطة');
     if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 0)) throw new HttpsError('failed-precondition', 'تجاوز المندوب حد الائتمان');
     tx.update(orderRef, {courier_id: uid, dispatch_status: 'accepted', dispatch_accepted_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
     tx.create(eventRef, {from_status: order.status, to_status: order.status, actor_id: uid, actor_role: 'courier', action: 'claim', created_at: FieldValue.serverTimestamp()});
@@ -552,6 +588,7 @@ exports.createOrder = onCall(async (data, context) => {
     }
     if (!vendorSnap.exists || vendorSnap.data()?.is_active !== true) throw new HttpsError('failed-precondition', 'المزود غير متاح');
     if (vendorSnap.data()?.zone_id !== zoneId || vendorSnap.data()?.is_busy === true) throw new HttpsError('failed-precondition', 'المزود مشغول أو خارج المنطقة');
+    if (!isVendorOpen(vendorSnap.data(), new Date())) throw new HttpsError('failed-precondition', 'المتجر مغلق حالياً');
     if (!zoneSnap.exists || zoneSnap.data()?.is_accepting_orders === false) throw new HttpsError('failed-precondition', 'التوصيل متوقف مؤقتاً');
     const windowStart = Number(rateSnap.data()?.window_start || 0);
     const count = Number(rateSnap.data()?.count || 0);
@@ -577,7 +614,7 @@ exports.createOrder = onCall(async (data, context) => {
       return {product_id: productSnaps[index].id, name: String(product.name || ''), price: unitPrice, quantity, selected_modifiers: modifiers};
     });
 
-    const config = configSnap.data() || {}; const zoneMultiplier = Number(zoneSnap.data()?.surge_multiplier || 1); const globalMultiplier = config.surge_enabled === true ? Number(config.surge_multiplier || 1) : 1; const freeDelivery = Array.isArray(config.free_delivery_vendor_ids) && config.free_delivery_vendor_ids.includes(vendorId); const deliveryFee = freeDelivery ? 0 : Number(zoneSnap.data()?.delivery_fee_base || config.default_delivery_fee || 0) * zoneMultiplier * globalMultiplier;
+    const config = configSnap.data() || {}; const zoneMultiplier = Number(zoneSnap.data()?.surge_multiplier || 1); const globalMultiplier = config.surge_enabled === true ? Number(config.surge_multiplier || 1) : 1; const freeDelivery = Array.isArray(config.free_delivery_vendor_ids) && config.free_delivery_vendor_ids.includes(vendorId); const deliveryFee = money(freeDelivery ? 0 : Number(zoneSnap.data()?.delivery_fee_base || config.default_delivery_fee || 0) * zoneMultiplier * globalMultiplier);
     let discount = 0;
     if (couponRef) {
       const couponSnap = await tx.get(couponRef);
@@ -585,18 +622,20 @@ exports.createOrder = onCall(async (data, context) => {
       const redemptionRef = couponRef.collection('redemptions').doc(customerId);
       const customerRedemption = await tx.get(redemptionRef);
       const expires = coupon?.expires_at?.toMillis?.() || null;
-      if (couponSnap.exists && coupon.is_active === true && (!expires || expires > now) && subtotal >= Number(coupon.min_order_amount || 0) && (!coupon.usage_limit_total || Number(coupon.used_count || 0) < Number(coupon.usage_limit_total)) && (!coupon.usage_limit_per_customer || !customerRedemption.exists) && (!coupon.restricted_to_customer || coupon.restricted_to_customer === customerId)) {
-        discount = couponDiscount(coupon, subtotal, deliveryFee);
-        tx.set(redemptionRef, {customer_id: customerId, order_id: orderRef.id, discount_amount: discount, redeemed_at: FieldValue.serverTimestamp()});
-        tx.update(couponRef, {used_count: FieldValue.increment(1)});
-      }
+      const couponValid = couponSnap.exists && coupon.is_active === true && (!expires || expires > now) && subtotal >= Number(coupon.min_order_amount || 0) && (!coupon.usage_limit_total || Number(coupon.used_count || 0) < Number(coupon.usage_limit_total)) && (!coupon.usage_limit_per_customer || !customerRedemption.exists) && (!coupon.restricted_to_customer || coupon.restricted_to_customer === customerId);
+      if (!couponValid) throw new HttpsError('failed-precondition', 'كود الخصم غير صالح أو منتهي');
+      discount = money(couponDiscount(coupon, subtotal, deliveryFee));
+      tx.set(redemptionRef, {customer_id: customerId, order_id: orderRef.id, discount_amount: discount, redeemed_at: FieldValue.serverTimestamp()});
+      tx.update(couponRef, {used_count: FieldValue.increment(1)});
     }
     const userData = userSnap.data() || {};
     const totalBeforePayment = Math.max(0, subtotal + deliveryFee - discount);
     const walletBalance = Number(userData.wallet_balance || 0);
     const loyaltyBalance = Number(userData.loyalty_points || 0);
     const pointValue = Number(config.loyalty_point_value || 0);
-    const pointsDiscount = Math.min(totalBeforePayment, requestedPoints * pointValue);
+    if (requestedPoints > 0 && pointValue <= 0) throw new HttpsError('failed-precondition', 'استبدال النقاط غير متاح حالياً');
+    const pointsDiscount = money(Math.min(totalBeforePayment, requestedPoints * pointValue));
+    const pointsUsed = pointValue > 0 ? Math.ceil(pointsDiscount / pointValue) : 0;
     const walletUsed = paymentMethod === 'cash_on_delivery' ? 0 : Math.min(totalBeforePayment - pointsDiscount, requestedWallet, walletBalance);
     if (paymentMethod === 'wallet' && walletUsed < totalBeforePayment) throw new HttpsError('failed-precondition', 'رصيد المحفظة غير كاف');
     if (requestedPoints > loyaltyBalance) throw new HttpsError('failed-precondition', 'نقاط الولاء غير كافية');
@@ -611,17 +650,17 @@ exports.createOrder = onCall(async (data, context) => {
       customer_id: customerId, vendor_id: vendorId, zone_id: zoneId, items, subtotal, delivery_fee: deliveryFee,
       coupon_code: discount > 0 ? couponCode : null, coupon_applied: discount > 0, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
       idempotency_key: idempotencyKey,
-      status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_status: cashDue === 0 ? 'paid' : 'unpaid', wallet_amount: walletUsed, loyalty_points_used: requestedPoints, cash_due: cashDue, cash_change_for: cashChangeFor,
+      status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_status: cashDue === 0 ? 'paid' : 'unpaid', wallet_amount: walletUsed, loyalty_points_used: pointsUsed, cash_due: cashDue, cash_change_for: cashChangeFor,
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
       created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
     });
     if (emulatorOnly && smokeFailAfterOrderWrite) {
       throw new HttpsError('internal', 'اختبار ذريّة محلي فقط');
     }
-    if (walletUsed > 0 || requestedPoints > 0) {
-      tx.update(userRef, {wallet_balance: FieldValue.increment(-walletUsed), loyalty_points: FieldValue.increment(-requestedPoints), updated_at: FieldValue.serverTimestamp()});
+    if (walletUsed > 0 || pointsUsed > 0) {
+      tx.update(userRef, {wallet_balance: FieldValue.increment(-walletUsed), loyalty_points: FieldValue.increment(-pointsUsed), updated_at: FieldValue.serverTimestamp()});
       if (walletUsed > 0) tx.create(userRef.collection('wallet_ledger').doc(), {label: 'دفع الطلب ' + orderRef.id.slice(0, 6), amount: walletUsed, unit: 'ل.س', direction: 'debit', order_id: orderRef.id, created_at: FieldValue.serverTimestamp()});
-      if (requestedPoints > 0) tx.create(userRef.collection('loyalty_ledger').doc(orderRef.id), {label: 'استبدال نقاط للطلب', points: requestedPoints, direction: 'debit', created_at: FieldValue.serverTimestamp()});
+      if (pointsUsed > 0) tx.create(userRef.collection('loyalty_ledger').doc(orderRef.id), {label: 'استبدال نقاط للطلب', points: pointsUsed, direction: 'debit', created_at: FieldValue.serverTimestamp()});
     }
     tx.create(secretRef, {customer_id: customerId, otp: deliveryOtp, otp_hash: createHash('sha256').update(deliveryOtp).digest('hex'), created_at: FieldValue.serverTimestamp()});
     tx.create(idempotencyRef, {customer_id: customerId, fingerprint: requestFingerprint, order_id: orderRef.id, created_at: FieldValue.serverTimestamp()});
@@ -679,6 +718,14 @@ async function writeAudit(target, before, after) {
   await db.collection('audit_logs').add({target, action: before ? (after ? 'update' : 'delete') : 'create', actor_id: after?.updated_by || after?.created_by || before?.updated_by || before?.created_by || null, details: {before: before || null, after: after || null}, created_at: FieldValue.serverTimestamp()});
 }
 
+exports.syncPublicSystemConfig = onDocumentWritten('system_config/{configId}', async (event) => {
+  if (event.params.configId !== 'main') return;
+  const after = event.data?.after;
+  if (!after?.exists) return db.doc('public_config/main').delete();
+  const safe = Object.fromEntries(Object.entries(after.data() || {}).filter(([key]) => key !== 'updated_by'));
+  return db.doc('public_config/main').set(safe, {merge: true});
+});
+
 exports.auditVendorChanges = onDocumentWritten('vendors/{vendorId}', async (event) => writeAudit(`vendors/${event.params.vendorId}`, event.data?.before?.data(), event.data?.after?.data()));
 exports.auditCourierChanges = onDocumentWritten('couriers/{courierId}', async (event) => writeAudit(`couriers/${event.params.courierId}`, event.data?.before?.data(), event.data?.after?.data()));
 // The admin dashboard writes privately to `vendors`; customers receive only a
@@ -695,9 +742,13 @@ exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (
   // createOrder is the single source of truth for coupon validation and totals.
   // Re-reading the coupon here could overwrite a valid discount after used_count changed.
   const discount = Math.max(0, Number(order.discount_amount || 0));
-  const vendor = await db.doc(`vendors/${order.vendor_id}`).get(); const rate = Number(vendor.data()?.commission_rate || 0); const commission = Math.round(Number(order.subtotal || 0) * rate / 100 * 100) / 100;
+  const vendor = await db.doc(`vendors/${order.vendor_id}`).get(); const rate = Number(vendor.data()?.commission_rate || 0); const commissionBase = Math.max(0, Number(order.subtotal || 0) - Number(order.discount_amount || 0)); const commission = money(commissionBase * rate / 100);
   const etaMinutes = Math.max(10, Number(order.prep_minutes || 20) + 15);
-  await snap.ref.update({commission, discount_amount: discount, total: Number(order.total || Math.max(0, Number(order.subtotal || 0) + Number(order.delivery_fee || 0) - discount)), eta_minutes: etaMinutes, synced: true, updated_at: FieldValue.serverTimestamp()});
+  await snap.ref.update({commission, discount_amount: discount, commission_base: commissionBase, total: Number(order.total || Math.max(0, Number(order.subtotal || 0) + Number(order.delivery_fee || 0) - discount)), eta_minutes: etaMinutes, synced: true, updated_at: FieldValue.serverTimestamp()});
+  const ledgerRef = db.doc(`financial_ledger/commission_${event.params.orderId}`);
+  await ledgerRef.create({type: 'order_commission', direction: 'credit', amount: commission, commission_base: commissionBase, rate, order_id: event.params.orderId, vendor_id: order.vendor_id, created_at: FieldValue.serverTimestamp()}).catch((error) => {
+    if (error.code !== 6 && error.code !== 'already-exists') throw error;
+  });
 });
 
 exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (event) => {
@@ -708,15 +759,18 @@ exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (even
   const distance = (a, b) => {
     if (!a || !b) return Number.MAX_SAFE_INTEGER; const lat = (a.latitude - b.latitude) * Math.PI / 180; const lng = (a.longitude - b.longitude) * Math.PI / 180; const x = Math.sin(lat / 2) ** 2 + Math.cos(a.latitude * Math.PI / 180) * Math.cos(b.latitude * Math.PI / 180) * Math.sin(lng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   };
-  const courier = candidates.docs.sort((left, right) => distance(left.data().current_location, vendorPoint) - distance(right.data().current_location, vendorPoint))[0];
-  await snap.ref.update({dispatch_candidates: [courier.id], dispatch_status: 'offered', dispatch_distance_km: distance(courier.data().current_location, vendorPoint), updated_at: FieldValue.serverTimestamp()}); await notifyUser(courier.id, 'طلب توصيل جديد', 'يوجد طلب جديد قريب من منطقتك', {order_id: event.params.orderId});
+  const located = candidates.docs.filter((doc) => doc.data()?.current_location && vendorPoint); if (!located.length) return;
+  const nearest = located.sort((left, right) => distance(left.data().current_location, vendorPoint) - distance(right.data().current_location, vendorPoint)).slice(0, 3);
+  await snap.ref.update({dispatch_candidates: nearest.map((doc) => doc.id), dispatch_status: 'offered', dispatch_distance_km: distance(nearest[0].data().current_location, vendorPoint), updated_at: FieldValue.serverTimestamp()});
+  await Promise.all(nearest.map((doc) => notifyUser(doc.id, 'طلب توصيل جديد', 'يوجد طلب جديد قريب من منطقتك', {order_id: event.params.orderId})));
 });
 
 exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) => {
   const before = event.data?.before?.data() || {}; const after = event.data?.after?.data(); if (!after) return; const statusChanged = before.status !== after.status;
-  if (statusChanged && after.status === 'cancelled') {
+  if (statusChanged && ['cancelled', 'failed_delivery', 'returned'].includes(after.status)) {
     const compensation = ['picked_up', 'on_the_way'].includes(before.status); await event.data.after.ref.update({commission: 0, commission_voided: true, ...(compensation ? {courier_compensation_due: true} : {}), updated_at: FieldValue.serverTimestamp()});
   }
+  if (!statusChanged) return;
   const body = `حالة طلبك: ${after.status}`; await notifyUser(after.customer_id, 'تحديث الطلب', body, {order_id: event.params.orderId}); await notifyUser(after.courier_id, 'تحديث مهمة التوصيل', body, {order_id: event.params.orderId});
   if (after.vendor_id) {
     const admin = await db.collection('users').where('vendor_id', '==', after.vendor_id).where('role', '==', 'vendor_admin').limit(1).get(); if (!admin.empty) await notifyUser(admin.docs[0].id, 'تحديث طلب المتجر', body, {order_id: event.params.orderId});
@@ -725,11 +779,11 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
     const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = Math.max(0, Number(after.subtotal || 0)); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
       const existing = await tx.get(eventRef); if (existing.exists) return; tx.set(walletRef, {debt: FieldValue.increment(debt), total_earnings: FieldValue.increment(earnings), balance: FieldValue.increment(earnings), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(eventRef, {type: 'delivery', order_id: event.params.orderId, debt, earnings, created_at: FieldValue.serverTimestamp()});
     }); const customerRef = db.doc(`users/${after.customer_id}`); const loyaltyRef = customerRef.collection('loyalty_ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
-      const existing = await tx.get(loyaltyRef); if (existing.exists) return; const points = Math.floor(Number(after.subtotal || 0) / 1000 * Number((await db.doc('system_config/main').get()).data()?.loyalty_points_rate || 0)); tx.set(customerRef, {loyalty_points: FieldValue.increment(points), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(loyaltyRef, {points, order_id: event.params.orderId, created_at: FieldValue.serverTimestamp()});
+      const existing = await tx.get(loyaltyRef); if (existing.exists) return; const points = Math.floor(Math.max(0, Number(after.subtotal || 0) - Number(after.discount_amount || 0)) / Math.max(1, Number((await db.doc('system_config/main').get()).data()?.loyalty_points_divisor || 1000)) * Number((await db.doc('system_config/main').get()).data()?.loyalty_points_rate || 0)); tx.set(customerRef, {loyalty_points: FieldValue.increment(points), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(loyaltyRef, {points, order_id: event.params.orderId, created_at: FieldValue.serverTimestamp()});
     });
   }
   if (statusChanged && after.status === 'delivered' && after.customer_id) {
-    const userRef = db.doc(`users/${after.customer_id}`); const userSnap = await userRef.get(); const user = userSnap.data() || {}; const completed = await db.collection('orders').where('customer_id', '==', after.customer_id).where('status', '==', 'delivered').limit(2).get(); if (completed.size === 1 && user.referred_by && !user.referral_rewarded) {
+    const userRef = db.doc(`users/${after.customer_id}`); const userSnap = await userRef.get(); const user = userSnap.data() || {}; const completed = await db.collection('orders').where('customer_id', '==', after.customer_id).where('status', '==', 'delivered').limit(2).get(); if (completed.size === 1 && user.referred_by && !user.referral_rewarded && user.referred_by !== after.customer_id) {
       const code = `REF${event.params.orderId.slice(0, 7).toUpperCase()}`; await db.doc(`coupons/${code}`).set({type: 'free_delivery', value: 0, min_order_amount: 0, expires_at: null, usage_limit_total: 1, usage_limit_per_customer: 1, used_count: 0, is_active: true, source: 'referral_reward', restricted_to_customer: user.referred_by, created_at: FieldValue.serverTimestamp()}); await userRef.update({referral_rewarded: true}); await notifyUser(user.referred_by, 'مكافأة إحالة', `حصلت على كوبون توصيل مجاني: ${code}`, {coupon_code: code});
     }
   }
