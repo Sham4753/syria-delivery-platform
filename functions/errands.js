@@ -2,17 +2,41 @@
 const {normalizePoint, pickZone, haversineKm, computeErrandFee, round2} = require('./geo');
 
 const CHANGE_REQUEST_WINDOW_MS = 48 * 60 * 60 * 1000;
+const QUOTE_CACHE_TTL_MS = 30 * 1000;
+const QUOTE_CACHE_MAX_ENTRIES = 200;
+const QUOTE_RATE_WINDOW_MS = 60 * 1000;
+const QUOTE_RATE_LIMIT = 20;
 
 // كل الاعتماديات تُحقن من index.js حتى يمكن اختبار المنطق المالي بقاعدة بيانات وهمية.
 function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, randomInt, requireRole, money}) {
   const sha = (value) => createHash('sha256').update(value).digest('hex');
   const label = (value) => String(value || '').trim().slice(0, 300);
+  const quoteCache = new Map();
+  const quoteRate = new Map();
+
+  function enforceQuoteRate(uid) {
+    const now = Date.now();
+    const current = quoteRate.get(uid);
+    if (!current || now - current.windowStart >= QUOTE_RATE_WINDOW_MS) {
+      quoteRate.set(uid, {windowStart: now, count: 1});
+      return;
+    }
+    if (current.count >= QUOTE_RATE_LIMIT) throw new HttpsError('resource-exhausted', 'تجاوزت حد طلبات التسعير مؤقتاً');
+    current.count += 1;
+  }
+
+  function cacheKey(pickup, dropoff) {
+    return `${pickup.latitude},${pickup.longitude}|${dropoff.latitude},${dropoff.longitude}`;
+  }
 
   // الخادم وحده يحدد المنطقة والرسم: من zones_geo (المضلعات) و zones (الرسم) و system_config.
   async function loadQuote(pickupRaw, dropoffRaw) {
     const pickup = normalizePoint(pickupRaw);
     const dropoff = normalizePoint(dropoffRaw);
     if (!pickup || !dropoff) throw new HttpsError('invalid-argument', 'حدد إحداثيات نقطة الاستلام ونقطة التسليم');
+    const key = cacheKey(pickup, dropoff);
+    const cached = quoteCache.get(key);
+    if (cached && Date.now() - cached.createdAt < QUOTE_CACHE_TTL_MS) return cached.quote;
     const [geoSnap, configSnap] = await Promise.all([db.collection('zones_geo').get(), db.doc('system_config/main').get()]);
     const zones = geoSnap.docs.map((doc) => ({id: doc.id, polygon: doc.data()?.polygon, active: doc.data()?.is_active !== false}));
     const pickupZone = pickZone(pickup, zones);
@@ -27,11 +51,15 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
     const {fee, breakdown} = computeErrandFee({zone, config: configSnap.data() || {}, distanceKm});
     // إذا كان الرسم صفرًا فالإعدادات ناقصة: نرفض بدل أن نعطي توصيلًا مجانيًا بالخطأ.
     if (!(fee > 0)) throw new HttpsError('failed-precondition', 'رسم التوصيل غير مضبوط لهذه المنطقة');
-    return {pickup, dropoff, zoneId: pickupZone, fee, distanceKm: round2(distanceKm), breakdown};
+    const quote = {pickup, dropoff, zoneId: pickupZone, fee, distanceKm: round2(distanceKm), breakdown};
+    quoteCache.set(key, {createdAt: Date.now(), quote});
+    if (quoteCache.size > QUOTE_CACHE_MAX_ENTRIES) quoteCache.delete(quoteCache.keys().next().value);
+    return quote;
   }
 
   const quoteErrand = onCall(async (data, context) => {
     if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+    enforceQuoteRate(context.auth.uid);
     const quote = await loadQuote(data?.pickup_address, data?.dropoff_address);
     return {zone_id: quote.zoneId, delivery_fee: quote.fee, distance_km: quote.distanceKm};
   });
@@ -110,6 +138,10 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
       const cashChangeFor = money(order.cash_change_for || 0);
       const amount = money(cashChangeFor - cashDue);
       if (!(amount > 0)) throw new HttpsError('failed-precondition', 'لا توجد فكة قابلة للتحويل');
+      const configSnap = await tx.get(db.doc('system_config/main'));
+      const configuredMax = Number(configSnap.data()?.max_change_amount || 0);
+      const maxChange = configuredMax > 0 ? configuredMax : cashDue * 10;
+      if (amount > maxChange) throw new HttpsError('failed-precondition', 'مبلغ الفكة أكبر من الحد المسموح ويحتاج مراجعة يدوية');
       tx.create(requestRef, {
         order_id: orderId, courier_id: uid, customer_id: String(order.customer_id || ''), amount, cash_due: cashDue, cash_change_for: cashChangeFor,
         courier_claimed_amount: claimed, status: 'pending', requested_at: FieldValue.serverTimestamp(),

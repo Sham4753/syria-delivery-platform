@@ -15,12 +15,23 @@ class _ErrandPageState extends State<ErrandPage> {
   final pickupLng = TextEditingController();
   final dropoffLat = TextEditingController();
   final dropoffLng = TextEditingController();
+  late final String idempotencyKey =
+      '${DateTime.now().microsecondsSinceEpoch}-errand';
   bool busy = false;
+
+  void showValidationError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> submit() async {
     if ([pickup, dropoff, description, pickupLat, pickupLng, dropoffLat, dropoffLng]
-        .any((c) => c.text.trim().isEmpty))
+        .any((c) => c.text.trim().isEmpty)) {
+      showValidationError('أكمل بيانات الاستلام والتسليم والوصف والإحداثيات');
       return;
+    }
     final pickupAddress = {
       'label': pickup.text.trim(),
       'latitude': double.tryParse(pickupLat.text.trim()),
@@ -32,7 +43,10 @@ class _ErrandPageState extends State<ErrandPage> {
       'longitude': double.tryParse(dropoffLng.text.trim()),
     };
     if ([pickupAddress, dropoffAddress].any((point) =>
-        point['latitude'] == null || point['longitude'] == null)) return;
+        point['latitude'] == null || point['longitude'] == null)) {
+      showValidationError('أدخل إحداثيات صحيحة بالأرقام العشرية');
+      return;
+    }
     setState(() => busy = true);
     try {
       final quote = await FirebaseFunctions.instance
@@ -41,7 +55,26 @@ class _ErrandPageState extends State<ErrandPage> {
             'pickup_address': pickupAddress,
             'dropoff_address': dropoffAddress,
           });
-      final quotedFee = quote.data['delivery' + '_fee'];
+      final quotedFee = quote.data['delivery_fee'];
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('تأكيد رسم التوصيل'),
+          content: Text('الرسم المحسوب من الخادم: $quotedFee ل.س'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('تعديل البيانات'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('تأكيد وإرسال'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
       final result = await FirebaseFunctions.instance
           .httpsCallable('createErrand')
           .call({
@@ -49,9 +82,7 @@ class _ErrandPageState extends State<ErrandPage> {
             'dropoff_address': dropoffAddress,
             'description': description.text.trim(),
             'expected_fee': quotedFee,
-            'idempotency_key': DateTime.now().microsecondsSinceEpoch
-                .toString()
-                .padRight(16, '0'),
+            'idempotency_key': idempotencyKey,
           });
       if (mounted)
         Navigator.pushReplacement(

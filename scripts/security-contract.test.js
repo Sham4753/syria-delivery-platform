@@ -29,7 +29,7 @@ assert(/change_requests/.test(requestBlock) && /order\.status !== 'delivered'/.t
 const reviewBlock = errands.slice(errands.indexOf('const reviewChangeRequest'));
 assert(/requireRole\(adminId, \['super_admin'\]\)/.test(reviewBlock) && /wallet_balance/.test(reviewBlock), 'only admins may credit the wallet after review');
 assert(/match \/change_requests\/{orderId}[^\n]*allow write: if false;/.test(rules), 'change_requests must be callable-only');
-assert(!/'delivery_fee'/.test(errandScreen) && !/'zone_id'/.test(errandScreen), 'customer errand screen must not send fee or zone');
+assert(!/['"]delivery_fee['"]\s*:/.test(errandScreen) && !/['"]zone_id['"]\s*:/.test(errandScreen), 'customer errand screen must not send fee or zone');
 assert(/maxChange/.test(functions), 'createOrder must cap the cash change amount');
 assert(/messaging\/registration-token-not-registered/.test(functions), 'notification failure must not abort accounting');
 assert(/request\.resource\.data\.role == 'customer'/.test(rules), 'self-created users must be customers only');
