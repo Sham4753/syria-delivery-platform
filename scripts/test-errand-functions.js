@@ -118,6 +118,7 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     await rejects(fns.requestChangeToWallet({order_id: 'o1'}, ctx('cour2')), 'failed-precondition', 'other courier');
     const r = await fns.requestChangeToWallet({order_id: 'o1', amount: 999999}, ctx('cour'));
     assert.strictEqual(r.amount, 20000, 'amount computed by server, not claimed'); assert.strictEqual(r.status, 'pending');
+    assert.strictEqual(db.store.get('change_requests/o1').needs_manual_review, false);
     assert.strictEqual(db.store.get('change_requests/o1').courier_claimed_amount, 999999);
     assert.strictEqual(db.store.get('users/cust').wallet_balance, 0, 'no credit before review');
     await rejects(fns.requestChangeToWallet({order_id: 'o1'}, ctx('cour')), 'already-exists', 'duplicate request');
@@ -151,6 +152,10 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     const manual = await fns.requestChangeToWallet({order_id: 'o6'}, ctx('cour'));
     assert.strictEqual(manual.status, 'pending');
     assert.strictEqual(manual.needs_manual_review, true, 'large change remains reviewable');
+    assert.strictEqual(db.store.get('change_requests/o6').needs_manual_review, true);
+    await rejects(fns.reviewChangeRequest({order_id: 'o6', decision: 'approve'}, ctx('admin')), 'invalid-argument', 'manual approval needs a note');
+    const approvedManual = await fns.reviewChangeRequest({order_id: 'o6', decision: 'approve', note: 'تمت مراجعة الفكة الكبيرة'}, ctx('admin'));
+    assert.strictEqual(approvedManual.status, 'approved');
   }
   console.log('errand function tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -16,6 +16,11 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
 
   function enforceQuoteRate(uid) {
     const now = Date.now();
+    if (quoteRate.size > 1000) {
+      for (const [key, value] of quoteRate) {
+        if (now - value.windowStart >= QUOTE_RATE_WINDOW_MS) quoteRate.delete(key);
+      }
+    }
     const current = quoteRate.get(uid);
     if (!current || now - current.windowStart >= QUOTE_RATE_WINDOW_MS) {
       if (current) quoteRate.delete(uid);
@@ -166,6 +171,7 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
       if (!requestSnap.exists) throw new HttpsError('not-found', 'طلب المراجعة غير موجود');
       const request = requestSnap.data() || {};
       if (request.status !== 'pending') throw new HttpsError('failed-precondition', 'تمت مراجعة هذا الطلب مسبقًا');
+      if (decision === 'approve' && request.needs_manual_review === true && !note) throw new HttpsError('invalid-argument', 'أضف ملاحظة تبرر اعتماد طلب الفكة الكبير');
       const review = {reviewed_by: adminId, reviewed_at: FieldValue.serverTimestamp(), review_note: note};
       if (decision === 'reject') {
         tx.update(requestRef, {status: 'rejected', ...review});
