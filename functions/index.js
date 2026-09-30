@@ -5,6 +5,7 @@ const {getAuth} = require('firebase-admin/auth');
 const {getFirestore, FieldValue} = require('firebase-admin/firestore');
 const {getMessaging} = require('firebase-admin/messaging');
 const {createHash, randomInt} = require('crypto');
+const {normalizePoint} = require('./geo');
 
 initializeApp();
 const db = getFirestore();
@@ -467,6 +468,9 @@ exports.createOrder = onCall(async (data, context) => {
   if (!vendorId || !zoneId || !address || rawItems.length === 0 || rawItems.length > 50) {
     throw new HttpsError('invalid-argument', 'بيانات الطلب غير مكتملة أو عدد الأصناف غير صالح');
   }
+  const deliveryPoint = normalizePoint(address.location);
+  if (!deliveryPoint) throw new HttpsError('invalid-argument', 'يجب تحديد موقع تسليم صالح من الخريطة أو GPS');
+  address.location = deliveryPoint;
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) throw new HttpsError('invalid-argument', 'معرف الطلب المكرر غير صالح');
 
   const rateRef = db.doc(`order_rate_limits/${customerId}`);
