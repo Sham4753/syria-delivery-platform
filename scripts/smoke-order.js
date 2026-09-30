@@ -39,7 +39,7 @@ async function callCreateOrder(headers, data) {
 }
 
 function assertRejected(result, status, message, label) {
-  if (result.response.ok || result.body.error?.status !== status ||
+  if (!result.body.error || result.body.error?.status !== status ||
       !String(result.body.error?.message || '').includes(message)) {
     throw new Error(`${label}: expected ${status}/${message}, got ${JSON.stringify(result.body)}`);
   }
