@@ -193,9 +193,7 @@ async function main() {
     const atomicKey = `smoke-order-atomic-failure-${runId}`;
     const atomicData = {...baseData, idempotency_key: atomicKey, __smoke_fail_after_order_write: true};
     const atomicResult = await callCreateOrder(headers, atomicData);
-    if (atomicResult.response.ok && !atomicResult.body.error) {
-      throw new Error('atomicity injection was not activated; set SMOKE_FAIL_AFTER_ORDER_WRITE=1 in functions/.env.local and restart the Firebase emulators (setting it only in the Smoke shell is insufficient)');
-    }
+    if (atomicResult.response.ok && !atomicResult.body.error) throw new Error('atomicity injection was not activated; restart the Firebase emulators and ensure SMOKE_TARGET=emulator');
     assertRejected(atomicResult, 'INTERNAL', 'اختبار ذريّة', 'atomicity injected failure');
     const atomicOrder = await db.collection('orders').where('idempotency_key', '==', atomicKey).get();
     const atomicMarker = await db.doc(`order_idempotency/${auth.localId}_${createHash('sha256').update(atomicKey).digest('hex').slice(0, 32)}`).get();

@@ -604,7 +604,8 @@ exports.createOrder = onCall(async (data, context) => {
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
       created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
     });
-    if (process.env.FUNCTIONS_EMULATOR === 'true' && process.env.SMOKE_FAIL_AFTER_ORDER_WRITE === '1' && data?.__smoke_fail_after_order_write === true) {
+    const emulatorOnly = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+    if (emulatorOnly && data?.__smoke_fail_after_order_write === true) {
       throw new HttpsError('internal', 'اختبار ذريّة محلي فقط');
     }
     if (walletUsed > 0 || requestedPoints > 0) {
