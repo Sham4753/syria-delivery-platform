@@ -7,6 +7,7 @@ const {getMessaging} = require('firebase-admin/messaging');
 const {createHash, randomInt} = require('crypto');
 const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
+const {customerReferralDefaults} = require('./referral-profile');
 
 initializeApp();
 const db = getFirestore();
@@ -655,13 +656,7 @@ exports.initializeCustomerReferral = onDocumentCreated('users/{uid}', async (eve
     const current = await tx.get(snap.ref);
     if (!current.exists) return;
     const data = current.data() || {};
-    tx.set(snap.ref, {
-      referral_code: data.referral_code ?? code,
-      referral_rewarded: data.referral_rewarded ?? false,
-      ...(Object.prototype.hasOwnProperty.call(data, 'wallet_balance') ? {} : {wallet_balance: 0}),
-      ...(Object.prototype.hasOwnProperty.call(data, 'loyalty_points') ? {} : {loyalty_points: 0}),
-      updated_at: FieldValue.serverTimestamp(),
-    }, {merge: true});
+    tx.set(snap.ref, {...customerReferralDefaults(data, code), updated_at: FieldValue.serverTimestamp()}, {merge: true});
   });
 });
 

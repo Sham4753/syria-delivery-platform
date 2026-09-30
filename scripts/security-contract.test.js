@@ -22,7 +22,7 @@ assert(/normalizePoint\(address\.location\)/.test(functions) && /pickZone\(deliv
 assert(/userSnap\.data\(\)\?\.role !== 'customer'/.test(functions), 'createOrder must reject non-customer roles');
 assert(/exports\.cancelOrder/.test(functions), 'refund-aware cancellation callable must exist');
 assert(/userSnap\.data\(\)\?\.role !== 'customer'/.test(functions), 'cancelOrder must reject non-customer roles');
-assert(/hasOwnProperty\.call\(data, 'wallet_balance'\)/.test(functions) && /hasOwnProperty\.call\(data, 'loyalty_points'\)/.test(functions), 'customer referral initialization must preserve existing wallet and loyalty balances');
+assert(/customerReferralDefaults/.test(functions), 'customer referral initialization must use the balance-preserving helper');
 assert(/exports\.createErrand|createErrand = onCall/.test(errands), 'errand callable must exist');
 assert(!/exports\.changeToWallet/.test(functions) && !/changeToWallet = onCall/.test(errands), 'old auto-credit changeToWallet must not exist');
 assert(/buildErrandFunctions/.test(functions), 'index.js must load errands.js');
@@ -45,6 +45,9 @@ assert(/tx\.create\(orderRef/.test(functions) && /tx\.create\(idempotencyRef/.te
 const atomicityGuard = fs.readFileSync(path.join(root, 'functions', 'atomicity-guard.js'), 'utf8');
 const atomicityTest = fs.readFileSync(path.join(root, 'scripts', 'atomicity-guard.test.js'), 'utf8');
 assert(/prepareCreateOrderPayload/.test(functions) && /functionsEmulator/.test(atomicityGuard) && /delete payload\.__smoke_fail_after_order_write/.test(atomicityGuard) && /functionsEmulator: false/.test(atomicityTest) && /shouldInjectFailure/.test(atomicityTest), 'partial-write injection must be emulator-only, rejected outside it, and removed before order validation and idempotency hashing');
+const referralProfile = fs.readFileSync(path.join(root, 'functions', 'referral-profile.js'), 'utf8');
+const referralTest = fs.readFileSync(path.join(root, 'scripts', 'referral-profile.test.js'), 'utf8');
+assert(/customerReferralDefaults/.test(functions) && /wallet_balance/.test(referralProfile) && /loyalty_points/.test(referralProfile) && /deepStrictEqual\(secondPresetMerged, firstPresetMerged/.test(referralTest) && /missing referral fields/.test(referralTest), 'referral initialization must preserve balances and be idempotent with missing-field defaults');
 assert(/SMOKE_FAIL_AFTER_ORDER_WRITE/.test(envSafety) && /\.env\.\*/.test(envSafety) && /\.env\.example/.test(envSafety), 'smoke injection env must be protected from tracked non-local env files');
 assert(/max_change_amount: \{type: 'number'/.test(functions) && /max_change_amount: Number\(config\.max_change_amount\) \|\| 0/.test(adminSettings), 'max_change_amount must be allowlisted, fallback-safe, and published from admin settings');
 assert(/where\('status', '==', 'pending'\)/.test(changeRequests) && /orderBy\('requested_at', 'desc'\)/.test(changeRequests) && /orderBy\('reviewed_at', 'desc'\)/.test(changeRequests) && /limit\(100\)/.test(changeRequests) && /limit\(50\)/.test(changeRequests), 'change request dashboard must bound and order pending and reviewed reads');
