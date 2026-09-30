@@ -9,6 +9,7 @@ const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
 const customer = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'common.dart'), 'utf8');
 const adminSettings = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'OperationsPages.jsx'), 'utf8');
 const changeRequests = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'ChangeRequestsPage.jsx'), 'utf8');
+const envSafety = fs.readFileSync(path.join(root, 'scripts', 'test-env-safety.js'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(`SECURITY CONTRACT FAILED: ${message}`);
@@ -39,6 +40,7 @@ const smokeOrder = fs.readFileSync(path.join(root, 'scripts', 'smoke-order.js'),
 assert(/missingLocation/.test(smokeOrder) && /outsideZone/.test(smokeOrder) && /invalidValues/.test(smokeOrder) && /boundary_inclusive/.test(smokeOrder) && /direct_write_denied/.test(smokeOrder) && /other_customer_read_denied/.test(smokeOrder) && /unfiltered_order_list_denied/.test(smokeOrder) && /sensitive_updates_denied/.test(smokeOrder) && /payment_method/.test(smokeOrder) && /delivery_address/.test(smokeOrder) && /assertCustomerOrderQueryWorks/.test(smokeOrder) && /concurrent_idempotency/.test(smokeOrder) && /Array\.from\(\{length: 20\}/.test(smokeOrder) && /Promise\.all/.test(smokeOrder) && /INVALID_ARGUMENT/.test(smokeOrder), 'createOrder smoke test must cover invalid, list/read/write security, scoped reads, 20-way concurrency, boundary, and valid locations');
 assert(/tx\.create\(orderRef/.test(functions) && /tx\.create\(idempotencyRef/.test(functions), 'order and idempotency marker must be committed in one transaction');
 assert(/FUNCTIONS_EMULATOR === 'true'/.test(functions) && /SMOKE_FAIL_AFTER_ORDER_WRITE/.test(functions) && /__smoke_fail_after_order_write/.test(smokeOrder), 'partial-write injection must be emulator-only and explicitly requested');
+assert(/SMOKE_FAIL_AFTER_ORDER_WRITE/.test(envSafety) && /\.env\.\*/.test(envSafety) && /\.env\.example/.test(envSafety), 'smoke injection env must be protected from tracked non-local env files');
 assert(/max_change_amount: \{type: 'number'/.test(functions) && /max_change_amount: Number\(config\.max_change_amount\) \|\| 0/.test(adminSettings), 'max_change_amount must be allowlisted, fallback-safe, and published from admin settings');
 assert(/where\('status', '==', 'pending'\)/.test(changeRequests) && /orderBy\('requested_at', 'desc'\)/.test(changeRequests) && /orderBy\('reviewed_at', 'desc'\)/.test(changeRequests) && /limit\(100\)/.test(changeRequests) && /limit\(50\)/.test(changeRequests), 'change request dashboard must bound and order pending and reviewed reads');
 assert(/window\.confirm/.test(changeRequests) && /courier_claimed_amount/.test(changeRequests), 'change request approval must confirm and show claimed amount');

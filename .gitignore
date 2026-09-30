@@ -27,6 +27,7 @@ local.properties
 .env
 .env.*
 !.env.example
+scripts/smoke-staging.local.ps1
 admin-dashboard/.env.production
 service-account*.json
 *-service-account*.json
