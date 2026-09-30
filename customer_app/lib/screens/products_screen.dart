@@ -91,15 +91,19 @@ class _ProductsPageState extends State<ProductsPage> {
     final userSnap = await FirebaseFirestore.instance.collection('users').doc(uid).get();
     final choice = await showPaymentSheet(context, total, userSnap.data() ?? {});
     if (choice == null) return;
-    final selectedAddress = Map<String, dynamic>.from(address!);
-    final selectedLocation = selectedAddress['location'] as GeoPoint?;
+    final sourceAddress = address!;
+    final selectedLocation = sourceAddress['location'] as GeoPoint?;
     if (selectedLocation == null) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('حدد موقع التوصيل من الخريطة أو GPS أولاً')));
       return;
     }
-    selectedAddress['location'] = {
+    final selectedAddress = <String, dynamic>{
+      for (final key in const ['label', 'building', 'floor', 'apartment', 'landmark'])
+        if (sourceAddress[key] != null) key: sourceAddress[key],
+      'location': {
       'latitude': selectedLocation.latitude,
       'longitude': selectedLocation.longitude,
+      },
     };
     final payload = <String, dynamic>{
         'vendor_id': widget.vendorId, 'zone_id': widget.zoneId, 'items': cart.values.toList(), 'coupon_code': couponCode,

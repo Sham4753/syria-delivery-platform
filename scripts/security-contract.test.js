@@ -17,6 +17,7 @@ function assert(condition, message) {
 assert(/if \(nextStatus === 'delivered'\) throw/.test(functions), 'direct delivered transition must be rejected');
 assert(/exports\.completeDelivery/.test(functions), 'OTP delivery callable must exist');
 assert(/Number\.isInteger\(quantity\)/.test(functions), 'order quantity must be integer validated');
+assert(/normalizePoint\(address\.location\)/.test(functions) && /pickZone\(deliveryPoint, zones\)/.test(functions), 'delivery location must be valid and inside the requested zone');
 assert(/exports\.cancelOrder/.test(functions), 'refund-aware cancellation callable must exist');
 assert(/exports\.createErrand|createErrand = onCall/.test(errands), 'errand callable must exist');
 assert(!/exports\.changeToWallet/.test(functions) && !/changeToWallet = onCall/.test(errands), 'old auto-credit changeToWallet must not exist');
@@ -33,6 +34,8 @@ assert(/requireRole\(adminId, \['super_admin'\]\)/.test(reviewBlock) && /wallet_
 assert(/match \/change_requests\/{orderId}[^\n]*allow write: if false;/.test(rules), 'change_requests must be callable-only');
 assert(!/['"]delivery_fee['"]\s*:/.test(errandScreen) && !/['"]zone_id['"]\s*:/.test(errandScreen), 'customer errand screen must not send fee or zone');
 assert(/maxChange/.test(functions), 'createOrder must cap the cash change amount');
+const smokeOrder = fs.readFileSync(path.join(root, 'scripts', 'smoke-order.js'), 'utf8');
+assert(/missingLocation/.test(smokeOrder) && /INVALID_ARGUMENT/.test(smokeOrder) && /location: \{ latitude:/.test(smokeOrder), 'createOrder smoke test must reject missing and accept valid location');
 assert(/max_change_amount: \{type: 'number'/.test(functions) && /max_change_amount: Number\(config\.max_change_amount\) \|\| 0/.test(adminSettings), 'max_change_amount must be allowlisted, fallback-safe, and published from admin settings');
 assert(/where\('status', '==', 'pending'\)/.test(changeRequests) && /orderBy\('requested_at', 'desc'\)/.test(changeRequests) && /orderBy\('reviewed_at', 'desc'\)/.test(changeRequests) && /limit\(100\)/.test(changeRequests) && /limit\(50\)/.test(changeRequests), 'change request dashboard must bound and order pending and reviewed reads');
 assert(/window\.confirm/.test(changeRequests) && /courier_claimed_amount/.test(changeRequests), 'change request approval must confirm and show claimed amount');

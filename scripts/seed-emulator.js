@@ -88,6 +88,11 @@ async function main() {
     enable_whatsapp_otp: false, low_bandwidth_mode: true, updated_at: timestamp(),
   }, { merge: true });
   await db.doc('zones/zone-1').set({ name: 'دمشق وريف دمشق - تجربة', delivery_fee_base: 10000, is_active: true, is_accepting_orders: true, surge_multiplier: 1, updated_at: timestamp() }, { merge: true });
+  await db.doc('zones_geo/zone-1').set({
+    polygon: [{lat: 32.9, lng: 35.8}, {lat: 32.9, lng: 37.2}, {lat: 34.2, lng: 37.2}, {lat: 34.2, lng: 35.8}],
+    is_active: true,
+    updated_at: timestamp(),
+  }, { merge: true });
 
   const seededVendors = [];
   for (const [category, items] of Object.entries(fixtures)) {
@@ -124,7 +129,7 @@ async function main() {
     const email = `customer${String(index).padStart(2, '0')}@test.local`;
     const user = await ensureUser(email, 'test123456', 'customer', { display_name: `زبون تجريبي ${index}`, phone: `0910000${String(index).padStart(3, '0')}`, wallet_balance: 100000, loyalty_points: 100, demo_seeded: true });
     customerIds.push(user.uid);
-    await db.doc(`users/${user.uid}/addresses/home`).set({ label: 'المنزل', city: 'دمشق', address: `عنوان تجريبي ${index} - دمشق`, landmark: 'قرب المنطقة الأولى', lat: 33.5138, lng: 36.2765, updated_at: timestamp() }, { merge: true });
+    await db.doc(`users/${user.uid}/addresses/home`).set({ label: 'المنزل', city: 'دمشق', address: `عنوان تجريبي ${index} - دمشق`, landmark: 'قرب المنطقة الأولى', location: new admin.firestore.GeoPoint(33.5138, 36.2765), updated_at: timestamp() }, { merge: true });
   }
 
   await db.doc('coupons/FIRST50').set({ type: 'percentage', value: 50, min_order_amount: 10000, expires_at: null, usage_limit_total: 100, usage_limit_per_customer: 1, used_count: 0, is_active: true, source: 'demo' }, { merge: true });

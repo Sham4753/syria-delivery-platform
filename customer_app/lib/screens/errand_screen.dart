@@ -1,4 +1,7 @@
+import 'package:latlong2/latlong.dart';
+
 import '../common.dart';
+import '../location_picker.dart';
 import 'orders_screen.dart';
 
 class ErrandPage extends StatefulWidget {
@@ -11,10 +14,8 @@ class _ErrandPageState extends State<ErrandPage> {
   final pickup = TextEditingController();
   final dropoff = TextEditingController();
   final description = TextEditingController();
-  final pickupLat = TextEditingController();
-  final pickupLng = TextEditingController();
-  final dropoffLat = TextEditingController();
-  final dropoffLng = TextEditingController();
+  LatLng? pickupLocation;
+  LatLng? dropoffLocation;
   late final String idempotencyKey =
       '${DateTime.now().microsecondsSinceEpoch}-errand';
   bool busy = false;
@@ -27,26 +28,21 @@ class _ErrandPageState extends State<ErrandPage> {
   }
 
   Future<void> submit() async {
-    if ([pickup, dropoff, description, pickupLat, pickupLng, dropoffLat, dropoffLng]
-        .any((c) => c.text.trim().isEmpty)) {
-      showValidationError('أكمل بيانات الاستلام والتسليم والوصف والإحداثيات');
+    if ([pickup, dropoff, description].any((c) => c.text.trim().isEmpty) ||
+        pickupLocation == null || dropoffLocation == null) {
+      showValidationError('أكمل بيانات الاستلام والتسليم والوصف وحدد الموقعين من الخريطة أو GPS');
       return;
     }
     final pickupAddress = {
       'label': pickup.text.trim(),
-      'latitude': double.tryParse(pickupLat.text.trim()),
-      'longitude': double.tryParse(pickupLng.text.trim()),
+      'latitude': pickupLocation!.latitude,
+      'longitude': pickupLocation!.longitude,
     };
     final dropoffAddress = {
       'label': dropoff.text.trim(),
-      'latitude': double.tryParse(dropoffLat.text.trim()),
-      'longitude': double.tryParse(dropoffLng.text.trim()),
+      'latitude': dropoffLocation!.latitude,
+      'longitude': dropoffLocation!.longitude,
     };
-    if ([pickupAddress, dropoffAddress].any((point) =>
-        point['latitude'] == null || point['longitude'] == null)) {
-      showValidationError('أدخل إحداثيات صحيحة بالأرقام العشرية');
-      return;
-    }
     setState(() => busy = true);
     try {
       final quote = await FirebaseFunctions.instance
@@ -124,26 +120,26 @@ class _ErrandPageState extends State<ErrandPage> {
           controller: dropoff,
           decoration: const InputDecoration(labelText: 'نقطة التسليم'),
         ),
-        TextField(
-          controller: pickupLat,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: const InputDecoration(labelText: 'خط عرض الاستلام'),
+        OutlinedButton.icon(
+          onPressed: busy ? null : () async {
+            final picked = await showLocationPicker(context, initialLocation: pickupLocation);
+            if (picked != null && mounted) setState(() => pickupLocation = picked);
+          },
+          icon: Icon(pickupLocation == null ? Icons.map_outlined : Icons.location_on),
+          label: Text(pickupLocation == null ? 'تحديد موقع الاستلام بالخريطة أو GPS' : 'تغيير موقع الاستلام'),
         ),
-        TextField(
-          controller: pickupLng,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: const InputDecoration(labelText: 'خط طول الاستلام'),
+        if (pickupLocation != null)
+          Text('الاستلام: ${pickupLocation!.latitude.toStringAsFixed(6)}, ${pickupLocation!.longitude.toStringAsFixed(6)}'),
+        OutlinedButton.icon(
+          onPressed: busy ? null : () async {
+            final picked = await showLocationPicker(context, initialLocation: dropoffLocation);
+            if (picked != null && mounted) setState(() => dropoffLocation = picked);
+          },
+          icon: Icon(dropoffLocation == null ? Icons.map_outlined : Icons.location_on),
+          label: Text(dropoffLocation == null ? 'تحديد موقع التسليم بالخريطة أو GPS' : 'تغيير موقع التسليم'),
         ),
-        TextField(
-          controller: dropoffLat,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: const InputDecoration(labelText: 'خط عرض التسليم'),
-        ),
-        TextField(
-          controller: dropoffLng,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: const InputDecoration(labelText: 'خط طول التسليم'),
-        ),
+        if (dropoffLocation != null)
+          Text('التسليم: ${dropoffLocation!.latitude.toStringAsFixed(6)}, ${dropoffLocation!.longitude.toStringAsFixed(6)}'),
         TextField(
           controller: description,
           maxLines: 3,

@@ -5,7 +5,7 @@ const {getAuth} = require('firebase-admin/auth');
 const {getFirestore, FieldValue} = require('firebase-admin/firestore');
 const {getMessaging} = require('firebase-admin/messaging');
 const {createHash, randomInt} = require('crypto');
-const {normalizePoint} = require('./geo');
+const {normalizePoint, pickZone} = require('./geo');
 
 initializeApp();
 const db = getFirestore();
@@ -471,6 +471,15 @@ exports.createOrder = onCall(async (data, context) => {
   const deliveryPoint = normalizePoint(address.location);
   if (!deliveryPoint) throw new HttpsError('invalid-argument', 'يجب تحديد موقع تسليم صالح من الخريطة أو GPS');
   address.location = deliveryPoint;
+  const geoSnap = await db.collection('zones_geo').get();
+  const zones = geoSnap.docs.map((doc) => ({
+    id: doc.id,
+    polygon: doc.data()?.polygon,
+    active: doc.data()?.is_active !== false,
+  }));
+  if (pickZone(deliveryPoint, zones) !== zoneId) {
+    throw new HttpsError('failed-precondition', 'نقطة التسليم خارج منطقة التوصيل المحددة');
+  }
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) throw new HttpsError('invalid-argument', 'معرف الطلب المكرر غير صالح');
 
   const rateRef = db.doc(`order_rate_limits/${customerId}`);
