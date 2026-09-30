@@ -33,7 +33,7 @@ assert(/requireRole\(adminId, \['super_admin'\]\)/.test(reviewBlock) && /wallet_
 assert(/match \/change_requests\/{orderId}[^\n]*allow write: if false;/.test(rules), 'change_requests must be callable-only');
 assert(!/['"]delivery_fee['"]\s*:/.test(errandScreen) && !/['"]zone_id['"]\s*:/.test(errandScreen), 'customer errand screen must not send fee or zone');
 assert(/maxChange/.test(functions), 'createOrder must cap the cash change amount');
-assert(/max_change_amount: \{type: 'number'/.test(functions) && /max_change_amount: Number\(config\.max_change_amount\)/.test(adminSettings), 'max_change_amount must be allowlisted and published from admin settings');
+assert(/max_change_amount: \{type: 'number'/.test(functions) && /max_change_amount: Number\(config\.max_change_amount\) \|\| 0/.test(adminSettings), 'max_change_amount must be allowlisted, fallback-safe, and published from admin settings');
 assert(/where\('status', '==', 'pending'\)/.test(changeRequests) && /orderBy\('requested_at', 'desc'\)/.test(changeRequests) && /orderBy\('reviewed_at', 'desc'\)/.test(changeRequests) && /limit\(100\)/.test(changeRequests) && /limit\(50\)/.test(changeRequests), 'change request dashboard must bound and order pending and reviewed reads');
 assert(/window\.confirm/.test(changeRequests) && /courier_claimed_amount/.test(changeRequests), 'change request approval must confirm and show claimed amount');
 assert(/messaging\/registration-token-not-registered/.test(functions), 'notification failure must not abort accounting');

@@ -17,7 +17,11 @@ export default function ChangeRequestsPage() {
     const byId = new Map()
     pending.forEach(item => byId.set(item.id, item))
     reviewed.forEach(item => byId.set(item.id, item))
-    return [...byId.values()].sort((a, b) => (b.reviewed_at?.seconds || b.requested_at?.seconds || 0) - (a.reviewed_at?.seconds || a.requested_at?.seconds || 0))
+    return [...byId.values()].sort((a, b) => {
+      const pendingFirst = Number(b.status === 'pending') - Number(a.status === 'pending')
+      if (pendingFirst) return pendingFirst
+      return (b.reviewed_at?.seconds || b.requested_at?.seconds || 0) - (a.reviewed_at?.seconds || a.requested_at?.seconds || 0)
+    })
   }, [pending, reviewed])
 
   useEffect(() => {
