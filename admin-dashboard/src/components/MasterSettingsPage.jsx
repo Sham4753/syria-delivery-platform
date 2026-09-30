@@ -11,7 +11,7 @@ const defaults = {
   commission_by_zone: {}, banners: [], categories: [], home_sections: ['categories', 'featured_vendors', 'nearby_vendors'],
   featured_vendor_ids: [], free_delivery_vendor_ids: [], surge_enabled: false, surge_multiplier: 1,
   batching_enabled: false, max_batch_orders: 2, loyalty_points_rate: 0, loyalty_point_value: 0,
-  courier_min_withdrawal: 0, merchant_min_withdrawal: 0, low_bandwidth_mode: false,
+  courier_min_withdrawal: 0, merchant_min_withdrawal: 0, max_change_amount: 100000, low_bandwidth_mode: false,
   min_order_amount: 0, primary_color: '#0f766e', secondary_color: '#f59e0b',
   enable_google_auth: true, enable_facebook_auth: false, enable_whatsapp_otp: false, enable_guest_shopping: true,
   app_logo_url: '',
@@ -87,6 +87,7 @@ export default function MasterSettingsPage() {
         <Field label="قيمة النقطة" type="number" min="0" value={config.loyalty_point_value || 0} onChange={e => update('loyalty_point_value', Number(e.target.value))} />
         <Field label="حد سحب المندوب" type="number" min="0" value={config.courier_min_withdrawal || 0} onChange={e => update('courier_min_withdrawal', Number(e.target.value))} />
         <Field label="حد سحب التاجر" type="number" min="0" value={config.merchant_min_withdrawal || 0} onChange={e => update('merchant_min_withdrawal', Number(e.target.value))} />
+        <Field label="الحد الأعلى للفكة" type="number" min="0" value={config.max_change_amount || 0} onChange={e => update('max_change_amount', Number(e.target.value))} />
         <Field label="الحد الأدنى للطلب" type="number" min="0" value={config.min_order_amount || 0} onChange={e => update('min_order_amount', Number(e.target.value))} />
       </div></section>
       <section className="data-card settings-card"><h2>الهوية والأصول منخفضة البيانات</h2><div className="form-grid"><Field label="اللون الأساسي" type="color" value={config.primary_color || '#0f766e'} onChange={e => update('primary_color', e.target.value)} /><Field label="اللون الثانوي" type="color" value={config.secondary_color || '#f59e0b'} onChange={e => update('secondary_color', e.target.value)} /><Field label="رابط شعار التطبيق" value={config.app_logo_url || ''} onChange={e => update('app_logo_url', e.target.value)} /><label className="field"><span>رفع شعار / WebP أقل من 150KB</span><input type="file" accept="image/*" disabled={uploadBusy} onChange={e => uploadAsset(e, 'app_logo_url', 'branding')} /></label></div></section>
