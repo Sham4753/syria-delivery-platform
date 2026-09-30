@@ -493,11 +493,18 @@ exports.topUpWallet = onCall(async (data, context) => {
 exports.createOrder = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const customerId = context.auth.uid;
-  const vendorId = String(data?.vendor_id || '');
-  const zoneId = String(data?.zone_id || '');
-  const address = data?.delivery_address;
-  const rawItems = Array.isArray(data?.items) ? data.items : [];
-  const idempotencyKey = String(data?.idempotency_key || '').trim();
+  const payload = data && typeof data === 'object' && !Array.isArray(data) ? {...data} : {};
+  const smokeFields = Object.keys(payload).filter((key) => key.startsWith('__smoke'));
+  const emulatorOnly = process.env.FUNCTIONS_EMULATOR === 'true';
+  if (smokeFields.length && !emulatorOnly) throw new HttpsError('invalid-argument', 'حقول الاختبار المحلي غير مسموحة');
+  if (smokeFields.some((key) => key !== '__smoke_fail_after_order_write')) throw new HttpsError('invalid-argument', 'حقل اختبار محلي غير معروف');
+  const smokeFailAfterOrderWrite = payload.__smoke_fail_after_order_write === true;
+  delete payload.__smoke_fail_after_order_write;
+  const vendorId = String(payload.vendor_id || '');
+  const zoneId = String(payload.zone_id || '');
+  const address = payload.delivery_address;
+  const rawItems = Array.isArray(payload.items) ? payload.items : [];
+  const idempotencyKey = String(payload.idempotency_key || '').trim();
   if (!vendorId || !zoneId || !address || rawItems.length === 0 || rawItems.length > 50) {
     throw new HttpsError('invalid-argument', 'بيانات الطلب غير مكتملة أو عدد الأصناف غير صالح');
   }
@@ -515,12 +522,12 @@ exports.createOrder = onCall(async (data, context) => {
   const zoneRef = db.doc(`zones/${zoneId}`);
   const userRef = db.doc(`users/${customerId}`);
   const productRefs = rawItems.map((item) => vendorRef.collection('products').doc(String(item.product_id || '')));
-  const couponCode = String(data?.coupon_code || '').trim().toUpperCase();
+  const couponCode = String(payload.coupon_code || '').trim().toUpperCase();
   const couponRef = couponCode ? db.doc(`coupons/${couponCode}`) : null;
-  const paymentMethod = String(data?.payment_method || 'cash_on_delivery');
-  const requestedWallet = Number(data?.wallet_amount || 0);
-  const requestedPoints = Number(data?.loyalty_points || 0);
-  const cashChangeFor = Number(data?.cash_change_for || 0);
+  const paymentMethod = String(payload.payment_method || 'cash_on_delivery');
+  const requestedWallet = Number(payload.wallet_amount || 0);
+  const requestedPoints = Number(payload.loyalty_points || 0);
+  const cashChangeFor = Number(payload.cash_change_for || 0);
   if (!['cash_on_delivery', 'wallet', 'hybrid'].includes(paymentMethod)) throw new HttpsError('invalid-argument', 'طريقة الدفع غير مدعومة');
   if (![requestedWallet, requestedPoints, cashChangeFor].every((value) => Number.isFinite(value) && value >= 0)) throw new HttpsError('invalid-argument', 'قيم الدفع يجب أن تكون أرقامًا موجبة');
   if (paymentMethod === 'wallet' && cashChangeFor !== 0) throw new HttpsError('invalid-argument', 'الفكة النقدية متاحة فقط للطلبات النقدية');
@@ -604,8 +611,7 @@ exports.createOrder = onCall(async (data, context) => {
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
       created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
     });
-    const emulatorOnly = process.env.FUNCTIONS_EMULATOR === 'true' || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
-    if (emulatorOnly && data?.__smoke_fail_after_order_write === true) {
+    if (emulatorOnly && smokeFailAfterOrderWrite) {
       throw new HttpsError('internal', 'اختبار ذريّة محلي فقط');
     }
     if (walletUsed > 0 || requestedPoints > 0) {
