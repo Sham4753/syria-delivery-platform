@@ -11,12 +11,6 @@ service cloud.firestore {
       let o = get(/databases/$(database)/documents/orders/$(orderId)).data;
       return signedIn() && (o.customer_id == request.auth.uid || o.courier_id == request.auth.uid || vendorOwner(o.vendor_id) || admin());
     }
-    function customerCancel() {
-      return signedIn() && resource.data.customer_id == request.auth.uid && resource.data.status == 'pending'
-        && request.resource.data.status == 'cancelled' && request.resource.data.cancelled_by == 'customer'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancelled_by', 'cancellation_reason', 'updated_at']);
-    }
-
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || admin());
       allow create: if signedIn() && request.auth.uid == uid
@@ -83,7 +77,8 @@ service cloud.firestore {
       // Client order creation is callable-only: prices, totals, coupons, and stock are server-derived.
       allow create: if false;
       allow read: if admin() || (signedIn() && (resource.data.customer_id == request.auth.uid || resource.data.courier_id == request.auth.uid || vendorOwner(resource.data.vendor_id) || (role('courier') && resource.data.courier_id == null && resource.data.status in ['pending', 'preparing', 'ready_for_pickup'])));
-      allow update: if admin() || customerCancel();
+      // Customer cancellation is callable-only so refunds, coupons, and audit events cannot be bypassed.
+      allow update: if admin();
       allow delete: if admin();
       match /events/{eventId} { allow read: if admin() || orderParty(orderId); allow write: if false; }
     }

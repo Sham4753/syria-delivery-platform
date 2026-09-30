@@ -5,6 +5,7 @@ const host = process.env.EMULATOR_HOST || '127.0.0.1';
 const projectId = process.env.GCLOUD_PROJECT || 'demo-syria-delivery';
 const authUrl = process.env.SMOKE_AUTH_URL || `http://${host}:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-api-key`;
 const callableUrl = process.env.SMOKE_CALLABLE_URL || `http://${host}:5001/${projectId}/us-central1/createOrder`;
+const cancelCallableUrl = process.env.SMOKE_CANCEL_CALLABLE_URL || `http://${host}:5001/${projectId}/us-central1/cancelOrder`;
 const firestoreUrl = process.env.SMOKE_FIRESTORE_URL || `http://${host}:8080/v1/projects/${projectId}/databases/(default)/documents`;
 const testPassword = process.env.SMOKE_TEST_PASSWORD || 'test123456';
 const customerEmail = process.env.SMOKE_CUSTOMER_EMAIL || 'customer01@test.local';
@@ -15,8 +16,8 @@ if (target === 'emulator' && !process.env.FIRESTORE_EMULATOR_HOST) {
   throw new Error('Smoke test requires FIRESTORE_EMULATOR_HOST; do not run against production');
 }
 if (!['emulator', 'staging'].includes(target)) throw new Error(`Unsupported SMOKE_TARGET: ${target}`);
-if (target === 'staging' && (!process.env.SMOKE_AUTH_URL || !process.env.SMOKE_CALLABLE_URL || !process.env.SMOKE_FIRESTORE_URL)) {
-  throw new Error('Staging Smoke requires SMOKE_AUTH_URL, SMOKE_CALLABLE_URL, and SMOKE_FIRESTORE_URL');
+if (target === 'staging' && (!process.env.SMOKE_AUTH_URL || !process.env.SMOKE_CALLABLE_URL || !process.env.SMOKE_CANCEL_CALLABLE_URL || !process.env.SMOKE_FIRESTORE_URL)) {
+  throw new Error('Staging Smoke requires SMOKE_AUTH_URL, SMOKE_CALLABLE_URL, SMOKE_CANCEL_CALLABLE_URL, and SMOKE_FIRESTORE_URL');
 }
 if (target !== 'emulator' && process.env.SMOKE_ATOMICITY_TEST === '1') {
   throw new Error('SMOKE_ATOMICITY_TEST is allowed only with SMOKE_TARGET=emulator');
@@ -39,8 +40,8 @@ async function login(email) {
   return response.json();
 }
 
-async function callCreateOrder(headers, data) {
-  const response = await fetch(callableUrl, {
+async function callCallable(url, headers, data) {
+  const response = await fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify({data}),
@@ -53,6 +54,14 @@ async function callCreateOrder(headers, data) {
     throw new Error(`createOrder returned non-JSON (${response.status}): ${text.slice(0, 200)}`);
   }
   return {response, body};
+}
+
+async function callCreateOrder(headers, data) {
+  return callCallable(callableUrl, headers, data);
+}
+
+async function callCancelOrder(headers, data) {
+  return callCallable(cancelCallableUrl, headers, data);
 }
 
 function assertRejected(result, status, message, label) {
@@ -228,21 +237,17 @@ async function main() {
     body: JSON.stringify({fields: cancelFields}),
   });
   await assertDirectOrderRequestDenied(otherCustomerCancel, 'other customer cancellation');
-  const cancelUpdate = await fetch(`${firestoreUrl}/orders/${cancelId}?${cancelMask}`, {
+  const directOwnerCancel = await fetch(`${firestoreUrl}/orders/${cancelId}?${cancelMask}`, {
     method: 'PATCH',
     headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
     body: JSON.stringify({fields: cancelFields}),
   });
-  const cancelBody = await cancelUpdate.json();
-  if (!cancelUpdate.ok || cancelBody.fields?.status?.stringValue !== 'cancelled') {
-    throw new Error(`customer cancellation failed: ${cancelUpdate.status} ${JSON.stringify(cancelBody)}`);
+  await assertDirectOrderRequestDenied(directOwnerCancel, 'direct owner cancellation');
+  const callableCancel = await callCancelOrder(headers, {order_id: cancelId, reason: 'smoke test'});
+  if (!callableCancel.response.ok || callableCancel.body.error || callableCancel.body.result?.status !== 'cancelled') {
+    throw new Error(`callable customer cancellation failed: ${JSON.stringify(callableCancel.body)}`);
   }
-  const repeatCancel = await fetch(`${firestoreUrl}/orders/${cancelId}?${cancelMask}`, {
-    method: 'PATCH',
-    headers: {'content-type': 'application/json', authorization: `Bearer ${auth.idToken}`},
-    body: JSON.stringify({fields: cancelFields}),
-  });
-  await assertDirectOrderRequestDenied(repeatCancel, 'cancellation after terminal status');
+  assertRejected(await callCancelOrder(headers, {order_id: cancelId, reason: 'repeat'}), 'FAILED_PRECONDITION', 'لا يمكن إلغاء الطلب', 'cancellation after terminal status');
 
   const replayCountBefore = await orderCount(auth.idToken, auth.localId);
   const replay = await callCreateOrder(headers, baseData);
@@ -272,7 +277,7 @@ async function main() {
     customer: customerEmail,
     vendor: 'restaurant-01',
     checks: [
-      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
+      'unauthenticated_rejected', 'non_customer_rejected', 'direct_write_denied', 'other_customer_read_denied', 'unfiltered_order_list_denied', 'sensitive_updates_denied', 'customer_cancel_other_customer_denied', 'customer_cancel_direct_write_denied', 'customer_cancel_callable_allowed', 'customer_cancel_wrong_status_denied', 'missing_location',
       'outside_zone_no_side_effect', 'swapped_coordinates', 'invalid_values', 'boundary_inclusive',
       'idempotency_replay_no_new_order', 'idempotency_payload_conflict', 'concurrent_idempotency', 'customer_scoped_order_query',
       ...(process.env.SMOKE_ATOMICITY_TEST === '1' ? ['atomicity_injected_failure_no_artifacts'] : []),
