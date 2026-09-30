@@ -3,6 +3,8 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const functions = fs.readFileSync(path.join(root, 'functions', 'index.js'), 'utf8');
+const errands = fs.readFileSync(path.join(root, 'functions', 'errands.js'), 'utf8');
+const errandScreen = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'screens', 'errand_screen.dart'), 'utf8');
 const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
 const customer = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'common.dart'), 'utf8');
 
@@ -14,10 +16,21 @@ assert(/if \(nextStatus === 'delivered'\) throw/.test(functions), 'direct delive
 assert(/exports\.completeDelivery/.test(functions), 'OTP delivery callable must exist');
 assert(/Number\.isInteger\(quantity\)/.test(functions), 'order quantity must be integer validated');
 assert(/exports\.cancelOrder/.test(functions), 'refund-aware cancellation callable must exist');
-assert(/exports\.createErrand/.test(functions), 'errand callable must exist');
-assert(/exports\.changeToWallet/.test(functions), 'change-to-wallet callable must exist');
-assert(/order\.status !== 'delivered'/.test(functions), 'change-to-wallet must require delivered order');
-assert(/order\.payment_method\)\)/.test(functions), 'change-to-wallet must restrict payment method');
+assert(/exports\.createErrand|createErrand = onCall/.test(errands), 'errand callable must exist');
+assert(!/exports\.changeToWallet/.test(functions) && !/changeToWallet = onCall/.test(errands), 'old auto-credit changeToWallet must not exist');
+assert(/buildErrandFunctions/.test(functions), 'index.js must load errands.js');
+assert(!/data\?\.(delivery_fee|zone_id)/.test(errands), 'errand fee and zone must never be read from the client');
+assert(/zones_geo/.test(errands) && /pickZone/.test(errands), 'errand zone must be derived from zones_geo polygons');
+assert(/expected_fee/.test(errands), 'errand creation must require the confirmed quote');
+assert(/idempotency_key/.test(errands), 'errand creation must be idempotent');
+const requestBlock = errands.slice(errands.indexOf('const requestChangeToWallet'), errands.indexOf('const reviewChangeRequest'));
+assert(requestBlock.length > 100 && !/wallet_balance/.test(requestBlock), 'requesting change must never credit the wallet');
+assert(/change_requests/.test(requestBlock) && /order\.status !== 'delivered'/.test(requestBlock), 'change request must require a delivered order');
+const reviewBlock = errands.slice(errands.indexOf('const reviewChangeRequest'));
+assert(/requireRole\(adminId, \['super_admin'\]\)/.test(reviewBlock) && /wallet_balance/.test(reviewBlock), 'only admins may credit the wallet after review');
+assert(/match \/change_requests\/{orderId}[^\n]*allow write: if false;/.test(rules), 'change_requests must be callable-only');
+assert(!/'delivery_fee'/.test(errandScreen) && !/'zone_id'/.test(errandScreen), 'customer errand screen must not send fee or zone');
+assert(/maxChange/.test(functions), 'createOrder must cap the cash change amount');
 assert(/messaging\/registration-token-not-registered/.test(functions), 'notification failure must not abort accounting');
 assert(/request\.resource\.data\.role == 'customer'/.test(rules), 'self-created users must be customers only');
 assert(/request\.resource\.data\.keys\(\)\.hasOnly/.test(rules), 'user creation fields must be allowlisted');

@@ -131,6 +131,7 @@ const CONFIG_LIMITS = {
   app_name: {type: 'string', max: 80}, currency: {type: 'string', max: 8}, support_phone: {type: 'string', max: 32},
   default_delivery_fee: {type: 'number', min: 0, max: 1000000000}, emergency_mode: {type: 'boolean'}, emergency_message: {type: 'string', max: 500},
   surge_enabled: {type: 'boolean'}, surge_multiplier: {type: 'number', min: 0.1, max: 10}, loyalty_point_value: {type: 'number', min: 0, max: 1000000},
+  errand_fee_per_km: {type: 'number', min: 0, max: 1000000000}, errand_min_fee: {type: 'number', min: 0, max: 1000000000}, max_change_amount: {type: 'number', min: 0, max: 1000000000},
 };
 
 function validateConfigPatch(patch) {
@@ -432,41 +433,6 @@ exports.cancelOrder = onCall(async (data, context) => {
   return {order_id: orderId, status: 'cancelled'};
 });
 
-exports.createErrand = onCall(async (data, context) => {
-  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
-  const pickup = data?.pickup_address; const dropoff = data?.dropoff_address;
-  const description = String(data?.description || '').trim(); const deliveryFee = Number(data?.delivery_fee);
-  if (!pickup?.label || !dropoff?.label || !description || description.length > 500 || !Number.isFinite(deliveryFee) || deliveryFee < 0 || deliveryFee > 100000000) throw new HttpsError('invalid-argument', 'بيانات الأمانة أو الرسم غير صالحة');
-  const orderRef = db.collection('orders').doc(); const secretRef = db.doc(`order_secrets/${orderRef.id}`); const otp = String(randomInt(100000, 1000000));
-  await db.runTransaction(async (tx) => {
-    tx.create(orderRef, {customer_id: context.auth.uid, vendor_id: null, courier_id: null, zone_id: null, fulfillment_type: 'errand', pickup_address: {label: String(pickup.label).slice(0, 300)}, delivery_address: {label: String(dropoff.label).slice(0, 300)}, errand_description: description, subtotal: 0, delivery_fee: deliveryFee, total: deliveryFee, cash_due: deliveryFee, payment_method: 'cash_on_delivery', payment_status: 'unpaid', status: 'pending', created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true});
-    tx.create(secretRef, {customer_id: context.auth.uid, otp, otp_hash: createHash('sha256').update(otp).digest('hex'), created_at: FieldValue.serverTimestamp()});
-  });
-  return {order_id: orderRef.id};
-});
-
-exports.changeToWallet = onCall(async (data, context) => {
-  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
-  await requireRole(context.auth.uid, ['courier']);
-  const orderId = String(data?.order_id || '').trim();
-  if (!orderId) throw new HttpsError('invalid-argument', 'رقم الطلب مطلوب');
-  const orderRef = db.doc(`orders/${orderId}`);
-  let amount = 0;
-  await db.runTransaction(async (tx) => {
-    const orderSnap = await tx.get(orderRef); if (!orderSnap.exists) throw new HttpsError('not-found', 'الطلب غير موجود');
-    const order = orderSnap.data() || {};
-    if (order.courier_id !== context.auth.uid || order.status !== 'delivered' || !['cash_on_delivery', 'hybrid'].includes(order.payment_method)) throw new HttpsError('failed-precondition', 'لا يمكن تحويل الفكة إلا بعد تسليم طلب نقدي');
-    const cashDue = money(Number(order.cash_due || 0));
-    amount = money(Number(order.cash_change_for || 0) - cashDue);
-    if (!Number.isFinite(amount) || amount <= 0 || order.change_to_wallet_amount) throw new HttpsError('failed-precondition', 'لا توجد فكة قابلة للتحويل أو تم تحويلها سابقًا');
-    const customerId = String(order.customer_id || ''); const userRef = db.doc(`users/${customerId}`); const ledgerRef = userRef.collection('wallet_ledger').doc(`change_${orderId}`);
-    tx.update(orderRef, {change_to_wallet_amount: amount, change_to_wallet_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()});
-    tx.update(userRef, {wallet_balance: FieldValue.increment(amount), updated_at: FieldValue.serverTimestamp()});
-    tx.create(ledgerRef, {label: `فكة الطلب ${orderId.slice(0, 6)}`, amount, unit: 'ل.س', direction: 'credit', order_id: orderId, created_at: FieldValue.serverTimestamp()});
-  });
-  return {order_id: orderId, amount, status: 'completed'};
-});
-
 exports.topUpWallet = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const method = String(data?.method || '');
@@ -583,6 +549,9 @@ exports.createOrder = onCall(async (data, context) => {
     if (requestedPoints > loyaltyBalance) throw new HttpsError('failed-precondition', 'نقاط الولاء غير كافية');
     const cashDue = Math.max(0, totalBeforePayment - walletUsed - pointsDiscount);
     if (cashChangeFor > 0 && cashChangeFor < cashDue) throw new HttpsError('invalid-argument', 'الفئة النقدية يجب أن تكون أكبر أو تساوي المبلغ المطلوب');
+    // سقف الفكة: من الإعدادات (max_change_amount)، وإلا عشرة أضعاف المبلغ المطلوب. اضبط max_change_amount حسب عملتك.
+    const maxChange = Number(config.max_change_amount || 0) > 0 ? Number(config.max_change_amount) : cashDue * 10;
+    if (cashChangeFor > 0 && cashChangeFor - cashDue > maxChange) throw new HttpsError('invalid-argument', 'قيمة الفئة النقدية أكبر من الحد المسموح');
     if (cashDue === 0 && cashChangeFor > 0) throw new HttpsError('invalid-argument', 'لا توجد فكة مطلوبة عند عدم وجود مبلغ نقدي');
     tx.set(rateRef, {window_start: windowStart && now - windowStart < 60 * 1000 ? windowStart : now, count: windowStart && now - windowStart < 60 * 1000 ? count + 1 : 1, updated_at: FieldValue.serverTimestamp()}, {merge: true});
     tx.create(orderRef, {
@@ -673,8 +642,8 @@ exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (
 exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (event) => {
   const snap = event.data; if (!snap) return; const order = snap.data(); if (order.fulfillment_type === 'pickup') return;
   const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get(); if (candidates.empty) return;
-  const vendor = (await db.doc(`vendors/${order.vendor_id}`).get()).data() || {};
-  const vendorPoint = vendor.location;
+  const vendor = order.vendor_id ? ((await db.doc(`vendors/${order.vendor_id}`).get()).data() || {}) : {};
+  const vendorPoint = order.fulfillment_type === 'errand' ? order.pickup_address : vendor.location;
   const distance = (a, b) => {
     if (!a || !b) return Number.MAX_SAFE_INTEGER; const lat = (a.latitude - b.latitude) * Math.PI / 180; const lng = (a.longitude - b.longitude) * Math.PI / 180; const x = Math.sin(lat / 2) ** 2 + Math.cos(a.latitude * Math.PI / 180) * Math.cos(b.latitude * Math.PI / 180) * Math.sin(lng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   };
@@ -708,3 +677,7 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
 exports.notifyNewChatMessage = onDocumentCreated('chats/{orderId}/messages/{messageId}', async (event) => {
   const message = event.data?.data(); if (!message) return; const order = (await db.doc(`orders/${event.params.orderId}`).get()).data() || {}; const recipient = message.sender_id === order.customer_id ? order.courier_id : order.customer_id; await notifyUser(recipient, 'رسالة جديدة', message.text || 'لديك رسالة جديدة', {order_id: event.params.orderId});
 });
+
+// الأمانات وتحويل الفكة: المنطق في errands.js (يُحقن بالاعتماديات ليسهل اختباره).
+const {buildErrandFunctions} = require('./errands');
+Object.assign(exports, buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, randomInt, requireRole, money}));
