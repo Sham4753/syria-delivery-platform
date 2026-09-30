@@ -22,6 +22,7 @@ assert(/normalizePoint\(address\.location\)/.test(functions) && /pickZone\(deliv
 assert(/userSnap\.data\(\)\?\.role !== 'customer'/.test(functions), 'createOrder must reject non-customer roles');
 assert(/exports\.cancelOrder/.test(functions), 'refund-aware cancellation callable must exist');
 assert(/userSnap\.data\(\)\?\.role !== 'customer'/.test(functions), 'cancelOrder must reject non-customer roles');
+assert(/hasOwnProperty\.call\(data, 'wallet_balance'\)/.test(functions) && /hasOwnProperty\.call\(data, 'loyalty_points'\)/.test(functions), 'customer referral initialization must preserve existing wallet and loyalty balances');
 assert(/exports\.createErrand|createErrand = onCall/.test(errands), 'errand callable must exist');
 assert(!/exports\.changeToWallet/.test(functions) && !/changeToWallet = onCall/.test(errands), 'old auto-credit changeToWallet must not exist');
 assert(/buildErrandFunctions/.test(functions), 'index.js must load errands.js');

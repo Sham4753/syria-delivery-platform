@@ -642,7 +642,18 @@ exports.overrideDispatch = onCall(async (data, context) => {
 exports.initializeCustomerReferral = onDocumentCreated('users/{uid}', async (event) => {
   const snap = event.data; if (!snap || snap.data()?.role !== 'customer') return;
   const code = String(event.params.uid).slice(0, 6).toUpperCase();
-  await snap.ref.set({referral_code: code, referral_rewarded: false, wallet_balance: 0, loyalty_points: 0, updated_at: FieldValue.serverTimestamp()}, {merge: true});
+  await db.runTransaction(async (tx) => {
+    const current = await tx.get(snap.ref);
+    if (!current.exists) return;
+    const data = current.data() || {};
+    tx.set(snap.ref, {
+      referral_code: data.referral_code ?? code,
+      referral_rewarded: data.referral_rewarded ?? false,
+      ...(Object.prototype.hasOwnProperty.call(data, 'wallet_balance') ? {} : {wallet_balance: 0}),
+      ...(Object.prototype.hasOwnProperty.call(data, 'loyalty_points') ? {} : {loyalty_points: 0}),
+      updated_at: FieldValue.serverTimestamp(),
+    }, {merge: true});
+  });
 });
 
 async function notifyUser(uid, title, body, data = {}) {
