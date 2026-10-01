@@ -76,6 +76,7 @@ class CourierHome extends StatefulWidget {
 class _CourierHomeState extends State<CourierHome> {
   Timer? timer;
   Position? position;
+  bool sendingLocation = false;
   @override
   void initState() {
     super.initState();
@@ -106,11 +107,17 @@ class _CourierHomeState extends State<CourierHome> {
       }
       return;
     }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      await FirebaseFirestore.instance.collection('couriers').doc(uid).set({'is_available': true, 'updated_at': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+    }
     await sendLocation();
     timer = Timer.periodic(const Duration(minutes: 2), (_) => sendLocation());
   }
 
   Future<void> sendLocation() async {
+    if (sendingLocation) return;
+    sendingLocation = true;
     try {
       final current = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -154,6 +161,8 @@ class _CourierHomeState extends State<CourierHome> {
           SnackBar(content: Text('تعذر تحديث الموقع: $error')),
         );
       }
+    } finally {
+      sendingLocation = false;
     }
   }
 

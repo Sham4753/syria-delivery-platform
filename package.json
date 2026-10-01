@@ -7,6 +7,7 @@
     "backfill:public-vendors": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 GCLOUD_PROJECT=demo-syria-delivery node scripts/backfill-public-vendors.js",
     "test:vendor-publication": "node scripts/test-public-vendor-publication.js",
     "test:security-contract": "node scripts/security-contract.test.js",
-    "test:fixes": "node scripts/time-utils.test.js && node scripts/wallet-guard.test.js && node scripts/security-ops.test.js && node scripts/security-contract.test.js"
+    "test:fixes": "node scripts/time-utils.test.js && node scripts/wallet-guard.test.js && node scripts/security-ops.test.js && node scripts/security-contract.test.js",
+    "test:batch2": "node scripts/batch2-contract.test.js && node scripts/time-utils.test.js && node scripts/wallet-guard.test.js"
   }
 }

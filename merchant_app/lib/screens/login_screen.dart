@@ -12,8 +12,22 @@ class _LoginPageState extends State<LoginPage> {
   final email = TextEditingController();
   final password = TextEditingController();
   String error = '';
+  bool busy = false;
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    super.dispose();
+  }
 
   Future<void> login() async {
+    if (busy) return;
+    if (email.text.trim().isEmpty || password.text.isEmpty) {
+      setState(() => error = 'أدخل البريد وكلمة المرور');
+      return;
+    }
+    setState(() { busy = true; error = ''; });
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email.text.trim(),
@@ -24,10 +38,12 @@ class _LoginPageState extends State<LoginPage> {
         context,
         MaterialPageRoute(builder: (_) => const MerchantGate()),
       );
+    } on FirebaseAuthException catch (e) {
+      if (mounted) setState(() => error = e.code == 'invalid-email' ? 'صيغة البريد الإلكتروني غير صحيحة' : 'تعذر الدخول. تحقق من الحساب والدور المرتبط بالمتجر.');
     } catch (_) {
-      setState(() {
-        error = 'تعذر الدخول. تحقق من الحساب والدور المرتبط بالمتجر.';
-      });
+      if (mounted) setState(() => error = 'تعذر الدخول. تحقق من الاتصال وحاول مجدداً.');
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -64,7 +80,7 @@ class _LoginPageState extends State<LoginPage> {
                   child: Text(error, style: const TextStyle(color: Colors.red)),
                 ),
               const SizedBox(height: 18),
-              FilledButton(onPressed: login, child: const Text('تسجيل الدخول')),
+              FilledButton(onPressed: busy ? null : login, child: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('تسجيل الدخول')),
             ],
           ),
         ),

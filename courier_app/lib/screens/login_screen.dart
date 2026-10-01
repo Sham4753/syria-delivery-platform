@@ -10,7 +10,25 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final email = TextEditingController();
   final password = TextEditingController();
+  bool busy = false;
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    super.dispose();
+  }
+
+  String messageFor(String code) {
+    if (code == 'invalid-input') return 'أدخل البريد وكلمة المرور';
+    if (code == 'invalid-email') return 'صيغة البريد الإلكتروني غير صحيحة';
+    if (code == 'user-disabled') return 'هذا الحساب معطل';
+    return 'البريد أو كلمة المرور غير صحيحة';
+  }
+
   Future<void> login() async {
+    if (busy) return;
+    setState(() => busy = true);
     try {
       final normalizedEmail = email.text.trim();
       if (normalizedEmail.isEmpty || password.text.isEmpty) {
@@ -31,10 +49,9 @@ class _LoginPageState extends State<LoginPage> {
         MaterialPageRoute(builder: (_) => const CourierGate()),
       );
     } on FirebaseAuthException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.code == 'invalid-input' ? 'أدخل البريد وكلمة المرور' : 'البريد أو كلمة المرور غير صحيحة')),
-      );
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(messageFor(error.code))));
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -64,7 +81,7 @@ class _LoginPageState extends State<LoginPage> {
                 decoration: const InputDecoration(labelText: 'كلمة المرور'),
               ),
               const SizedBox(height: 18),
-              FilledButton(onPressed: login, child: const Text('تسجيل الدخول')),
+              FilledButton(onPressed: busy ? null : login, child: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('تسجيل الدخول')),
             ],
           ),
         ),
