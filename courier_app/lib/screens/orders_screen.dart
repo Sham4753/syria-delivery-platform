@@ -85,6 +85,10 @@ class _CourierHomeState extends State<CourierHome> {
   @override
   void dispose() {
     timer?.cancel();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('couriers').doc(uid).set({'is_available': false, 'updated_at': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+    }
     super.dispose();
   }
 

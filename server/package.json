@@ -1,0 +1,20 @@
+{
+  "name": "syria-delivery-private-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private Node.js API and scheduler for Syria Delivery",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "lint": "node --check src/app.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "express": "^4.21.2",
+    "firebase-admin": "^12.7.0",
+    "helmet": "^8.0.0",
+    "cors": "^2.8.5"
+  }
+}

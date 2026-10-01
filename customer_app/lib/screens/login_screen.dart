@@ -14,10 +14,14 @@ class _LoginPageState extends State<LoginPage> {
   ConfirmationResult? webConfirmation;
   String? verificationId;
   bool busy = false;
+  DateTime? lastCodeSentAt;
 
   Future<void> social(AuthProvider provider) async {
     setState(() => busy = true);
     try {
+      if (!kIsWeb) {
+        throw FirebaseAuthException(code: 'unsupported-platform', message: 'تسجيل Google/Facebook عبر هذه الشاشة متاح على الويب فقط حالياً');
+      }
       final result = await FirebaseAuth.instance.signInWithPopup(provider);
       final user = result.user;
       if (user != null) await FirebaseFirestore.instance.collection('users').doc(user.uid).set({'role': 'customer', 'display_name': user.displayName ?? '', 'phone': user.phoneNumber ?? '', 'updated_at': FieldValue.serverTimestamp()}, SetOptions(merge: true));
@@ -29,19 +33,31 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> sendPhoneCode() async {
+    final lastSent = lastCodeSentAt;
+    if (lastSent != null && DateTime.now().difference(lastSent).inSeconds < 60) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('انتظر دقيقة قبل إعادة إرسال الرمز')));
+      return;
+    }
     setState(() => busy = true);
     try {
       if (kIsWeb) {
         webConfirmation = await FirebaseAuth.instance.signInWithPhoneNumber(phone.text.trim(), RecaptchaVerifier(auth: FirebaseAuthPlatform.instance));
       } else {
-        await FirebaseAuth.instance.verifyPhoneNumber(phoneNumber: phone.text.trim(), verificationCompleted: (credential) async { await FirebaseAuth.instance.signInWithCredential(credential); }, verificationFailed: (e) => throw e, codeSent: (id, _) => verificationId = id, codeAutoRetrievalTimeout: (id) => verificationId = id);
+        FirebaseAuthException? phoneError;
+        await FirebaseAuth.instance.verifyPhoneNumber(phoneNumber: phone.text.trim(), verificationCompleted: (credential) async { await FirebaseAuth.instance.signInWithCredential(credential); }, verificationFailed: (e) => phoneError = e, codeSent: (id, _) => verificationId = id, codeAutoRetrievalTimeout: (id) => verificationId = id);
+        if (phoneError != null) throw phoneError!;
       }
+      lastCodeSentAt = DateTime.now();
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال رمز التفعيل')));
     } on FirebaseAuthException catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? 'تعذر إرسال الرمز'))); } finally { if (mounted) setState(() => busy = false); }
   }
 
   Future<void> verifyPhoneCode() async {
     try {
+      if (!kIsWeb && (verificationId == null || verificationId!.isEmpty)) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أرسل رمز التفعيل أولاً')));
+        return;
+      }
       final credential = kIsWeb ? await webConfirmation?.confirm(code.text.trim()) : await FirebaseAuth.instance.signInWithCredential(PhoneAuthProvider.credential(verificationId: verificationId!, smsCode: code.text.trim()));
       if (credential == null) return;
       await FirebaseFirestore.instance.collection('users').doc(credential.user!.uid).set({'role': 'customer', 'phone': phone.text.trim(), 'display_name': credential.user!.displayName ?? '', 'updated_at': FieldValue.serverTimestamp()}, SetOptions(merge: true));

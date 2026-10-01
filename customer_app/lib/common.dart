@@ -22,7 +22,7 @@ export 'package:url_launcher/url_launcher.dart';
 
 final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
 
-const networkTimeout = Duration(seconds: 3);
+const networkTimeout = Duration(seconds: 15);
 
 Future<T> withNetworkTimeout<T>(Future<T> request, {Duration? timeout}) =>
     request.timeout(timeout ?? networkTimeout);
@@ -73,11 +73,11 @@ Future<List<Map<String, dynamic>>> loadVendors(String category) async {
   try {
     final snapshot = await withNetworkTimeout(
       FirebaseFirestore.instance.collection('public_vendors')
-          .where('is_active', isEqualTo: true).get(),
+          .where('is_active', isEqualTo: true)
+          .where('category', isEqualTo: category).get(),
     );
     final data = snapshot.docs
         .map((doc) => {'id': doc.id, ...doc.data()})
-        .where((item) => item['category'] == category)
         .toList();
     await cacheJson('customer.vendors.$category', data);
     return data;
@@ -94,7 +94,7 @@ Future<List<Map<String, dynamic>>> loadVendors(String category) async {
 bool vendorIsOpen(Map<String, dynamic> data) {
   final hours = data['opening_hours'] as Map<String, dynamic>?;
   if (hours == null) return true;
-  final now = TimeOfDay.now();
+  final now = DateTime.now();
   final current = now.hour * 60 + now.minute;
 
   int parse(String value) {
@@ -105,7 +105,9 @@ bool vendorIsOpen(Map<String, dynamic> data) {
   try {
     final opening = parse('${hours['open'] ?? '00:00'}');
     final closing = parse('${hours['close'] ?? '23:59'}');
-    return current >= opening && current <= closing;
+    return opening <= closing
+        ? current >= opening && current <= closing
+        : current >= opening || current <= closing;
   } catch (_) {
     return true;
   }

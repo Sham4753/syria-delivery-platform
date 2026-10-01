@@ -388,7 +388,8 @@ function isVendorOpen(vendor, now = new Date()) {
   const [openH, openM] = String(hours.open || '00:00').split(':').map(Number);
   const [closeH, closeM] = String(hours.close || '23:59').split(':').map(Number);
   if (![openH, openM, closeH, closeM].every(Number.isFinite)) return false;
-  const current = now.getHours() * 60 + now.getMinutes();
+  const parts = new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Damascus', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).formatToParts(now);
+  const current = Number(parts.find((part) => part.type === 'hour')?.value) * 60 + Number(parts.find((part) => part.type === 'minute')?.value);
   const open = openH * 60 + openM; const close = closeH * 60 + closeM;
   return open <= close ? current >= open && current <= close : current >= open || current <= close;
 }
@@ -817,7 +818,11 @@ async function offerNextCourier(orderId) {
   if (!pickupPoint) return {status: 'missing_pickup_point'};
   const attempted = new Set(Array.isArray(order.dispatch_attempted_courier_ids) ? order.dispatch_attempted_courier_ids : []);
   const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get();
-  const eligible = candidates.docs.filter((doc) => !attempted.has(doc.id) && pointOf(doc.data()?.current_location));
+  const eligible = candidates.docs.filter((doc) => {
+    const courier = doc.data() || {};
+    const locationAt = courier.last_location_at?.toDate?.()?.getTime?.() || 0;
+    return !attempted.has(doc.id) && pointOf(courier.current_location) && locationAt > Date.now() - 10 * 60 * 1000;
+  });
   const enriched = await Promise.all(eligible.map(async (doc) => {
     const wallet = (await db.doc(`courier_wallets/${doc.id}`).get()).data() || {};
     if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 100)) return null;
@@ -959,8 +964,9 @@ exports.cancelOrder = onCall(async (data, context) => {
 exports.topUpWallet = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const method = String(data?.method || '');
-  const reference = String(data?.reference || '').trim();
-  if (!['voucher', 'local_transfer', 'change_to_wallet'].includes(method) || !reference) throw new HttpsError('invalid-argument', 'طريقة الشحن والمرجع مطلوبان');
+  const rawReference = String(data?.reference || '').trim();
+  const reference = method === 'voucher' ? rawReference.toUpperCase() : rawReference.slice(0, 120);
+  if (!['voucher', 'local_transfer', 'change_to_wallet'].includes(method) || !reference || (method === 'voucher' && !/^[A-Z0-9_-]{3,120}$/.test(reference)) ) throw new HttpsError('invalid-argument', 'طريقة الشحن والمرجع مطلوبان');
   const uid = context.auth.uid;
   if (method === 'voucher') {
     const voucherRef = db.doc('wallet_vouchers/' + reference.toUpperCase());
@@ -1168,6 +1174,8 @@ async function notifyUser(uid, title, body, data = {}) {
 }
 
 async function writeAudit(target, before, after) {
+  const locationOnly = before && after && Object.keys({...before, ...after}).every((key) => ['current_location', 'last_location_at', 'updated_at'].includes(key) || JSON.stringify(before[key]) === JSON.stringify(after[key]));
+  if (locationOnly) return;
   await db.collection('audit_logs').add({target, action: before ? (after ? 'update' : 'delete') : 'create', actor_id: after?.updated_by || after?.created_by || before?.updated_by || before?.created_by || null, details: {before: before || null, after: after || null}, created_at: FieldValue.serverTimestamp()});
 }
 
@@ -1213,7 +1221,10 @@ exports.dispatchPendingOrder = onDocumentWritten('orders/{orderId}', async (even
 });
 
 exports.expireDispatchOffers = onScheduled('every 1 minutes', async () => {
-  const now = Date.now(); const pending = await db.collection('orders').where('dispatch_status', '==', 'offered').limit(100).get();
+  const now = Date.now();
+  const waiting = await db.collection('orders').where('dispatch_status', 'in', ['waiting_for_courier', 'requeue']).limit(100).get();
+  for (const waitingDoc of waiting.docs) await offerNextCourier(waitingDoc.id);
+  const pending = await db.collection('orders').where('dispatch_status', '==', 'offered').limit(100).get();
   for (const doc of pending.docs) {
     const order = doc.data() || {}; const expiresAt = order.dispatch_expires_at?.toDate?.()?.getTime?.() || 0;
     if (!expiresAt || expiresAt > now || order.courier_id) continue;
