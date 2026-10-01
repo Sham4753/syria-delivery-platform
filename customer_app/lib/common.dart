@@ -92,7 +92,7 @@ Future<List<Map<String, dynamic>>> loadVendors(String category) async {
 bool vendorIsOpen(Map<String, dynamic> data) {
   final hours = data['opening_hours'] as Map<String, dynamic>?;
   if (hours == null) return true;
-  final now = TimeOfDay.now();
+  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
   final current = now.hour * 60 + now.minute;
 
   int parse(String value) {
@@ -103,7 +103,9 @@ bool vendorIsOpen(Map<String, dynamic> data) {
   try {
     final opening = parse('${hours['open'] ?? '00:00'}');
     final closing = parse('${hours['close'] ?? '23:59'}');
-    return current >= opening && current <= closing;
+    return opening <= closing
+        ? current >= opening && current <= closing
+        : current >= opening || current <= closing;
   } catch (_) {
     return true;
   }

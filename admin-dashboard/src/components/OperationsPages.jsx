@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { collection, doc, GeoPoint, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, doc, GeoPoint, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { EmailAuthProvider, reauthenticateWithCredential, updateEmail, updatePassword } from 'firebase/auth'
 import { auth, db, functions } from '../firebase'
@@ -22,4 +22,14 @@ export function SettlementsPage() {
   useEffect(() => onSnapshot(collection(db, 'settlements'), snapshot => setItems(snapshot.docs.map(item => ({ id: item.id, ...item.data() })).sort((a, b) => (b.created_at?.seconds || 0) - (a.created_at?.seconds || 0))), () => notify('تعذر تحميل التسويات', 'error')), [notify])
   const approve = async id => { setBusy(id); try { await httpsCallable(functions, 'approveSettlement')({ settlement_id: id }); notify('تم اعتماد التسوية وكتابة القيد المالي') } catch (error) { notify(error.message || 'تعذر اعتماد التسوية', 'error') } finally { setBusy('') } }
   return <><section className="page-heading"><div><p className="eyebrow">FINANCE / SETTLEMENTS</p><h1>الورديات والتسويات</h1><p>مراجعة فروقات الصندوق واعتمادها قبل تسجيل القيد المالي.</p></div></section><section className="data-card"><table><thead><tr><th>المالك</th><th>الوردية</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.owner_type === 'vendor' ? 'تاجر' : 'مندوب'} / {item.owner_id}</td><td>{item.shift_id}</td><td>{item.expected_cash || 0} ل.س</td><td>{item.counted_cash || 0} ل.س</td><td className={Number(item.variance || 0) < 0 ? 'negative' : ''}>{item.variance || 0} ل.س</td><td><span className={`badge ${item.status === 'approved' ? 'green' : 'blue'}`}>{item.status}</span></td><td>{item.status === 'pending_approval' ? <Button busy={busy === item.id} onClick={() => approve(item.id)}>اعتماد</Button> : 'تم الاعتماد'}</td></tr>)}</tbody></table>{!items.length && <EmptyState>لا توجد تسويات بعد.</EmptyState>}</section><Toast toast={toast} /></>
+}
+
+export function WalletTopupsPage() {
+  const [items, setItems] = useState([])
+  const [amounts, setAmounts] = useState({})
+  const [busy, setBusy] = useState('')
+  const { toast, notify } = useToast()
+  useEffect(() => onSnapshot(query(collection(db, 'wallet_topups'), where('status', '==', 'pending')), snapshot => setItems(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))), () => notify('تعذر تحميل طلبات شحن المحفظة', 'error')), [notify])
+  const resolve = async (id, decision) => { setBusy(`${id}:${decision}`); try { await httpsCallable(functions, 'approveWalletTopUp')({ topup_id: id, decision, ...(decision === 'approve' ? { amount: Number(amounts[id]) } : {}) }); notify(decision === 'approve' ? 'تم اعتماد الشحن وإضافة الرصيد' : 'تم رفض طلب الشحن') } catch (error) { notify(error.message || 'تعذر حسم طلب الشحن', 'error') } finally { setBusy('') } }
+  return <><section className="page-heading"><div><p className="eyebrow">FINANCE / WALLET TOPUPS</p><h1>طلبات شحن المحافظ</h1><p>تحقق من التحويل المحلي ثم اعتمد المبلغ الفعلي أو ارفض الطلب.</p></div></section><section className="data-card"><table><thead><tr><th>العميل</th><th>الطريقة</th><th>المرجع</th><th>المبلغ</th><th>الإجراء</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.customer_id}</td><td>{item.method}</td><td><strong>{item.reference}</strong></td><td><Field label="" type="number" min="1" value={amounts[item.id] || ''} placeholder="المبلغ" onChange={event => setAmounts(current => ({ ...current, [item.id]: event.target.value }))} /></td><td><div className="table-actions"><Button busy={busy === `${item.id}:approve`} onClick={() => resolve(item.id, 'approve')}>اعتماد</Button><Button variant="secondary" busy={busy === `${item.id}:deny`} onClick={() => resolve(item.id, 'deny')}>رفض</Button></div></td></tr>)}</tbody></table>{!items.length && <EmptyState>لا توجد طلبات شحن معلّقة.</EmptyState>}</section><Toast toast={toast} /></>
 }

@@ -1,7 +1,9 @@
 const {onDocumentCreated: firestoreOnCreated, onDocumentWritten: firestoreOnWritten} = require('firebase-functions/v2/firestore');
+const {onSchedule} = require('firebase-functions/v2/scheduler');
 const triggerOptions = {region: 'europe-west1'};
 const onDocumentCreated = (path, handler) => firestoreOnCreated({...triggerOptions, document: path}, handler);
 const onDocumentWritten = (path, handler) => firestoreOnWritten({...triggerOptions, document: path}, handler);
+const scheduled = (schedule, handler) => onSchedule({schedule, timeZone: 'Asia/Damascus', region: 'europe-west1'}, handler);
 const functionsV1 = require('firebase-functions/v1');
 const {HttpsError} = require('firebase-functions/v1/https');
 const FUNCTION_REGION = 'europe-west1';
@@ -14,9 +16,12 @@ const {createHash, randomInt} = require('crypto');
 const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
+const {DEFAULT_COURIER_CREDIT_LIMIT, effectiveCourierCreditLimit, courierCashDebt, isVendorOpen} = require('./operational-logic');
 
 initializeApp();
 const db = getFirestore();
+const DISPATCH_OFFER_TIMEOUT_MS = 10 * 60 * 1000;
+const DISPATCH_SCAN_LIMIT = 100;
 // تعطيل منطقة أو تعديل مضلعها قد يتأخر حتى 60 ثانية؛ اضبط ZONES_GEO_CACHE_MS=0 للاختبارات.
 const configuredZonesGeoCacheMs = Number(process.env.ZONES_GEO_CACHE_MS ?? 60 * 1000);
 const ZONES_GEO_CACHE_MS = Number.isFinite(configuredZonesGeoCacheMs) ? Math.max(0, configuredZonesGeoCacheMs) : 60 * 1000;
@@ -181,7 +186,7 @@ exports.createStaffAccount = onCall(async (data, context) => {
     batch.set(db.doc(`users/${userRecord.uid}`), {role, email: userRecord.email, ...(role === 'vendor_admin' ? {vendor_id: vendorId} : {}), created_at: FieldValue.serverTimestamp(), created_by: caller.uid});
     if (role === 'courier') {
       batch.set(db.doc(`couriers/${userRecord.uid}`), {name: String(name).trim(), phone: String(phone).trim(), photo_url: String(photoUrl || '').trim(), vehicle_plate: String(vehiclePlate || '').trim(), vehicle_type: String(vehicleType || '').trim(), zone_id: zoneId, is_available: true, created_at: FieldValue.serverTimestamp()});
-      batch.set(db.doc(`courier_wallets/${userRecord.uid}`), {debt: 0, credit_limit: 100, balance: 0, total_earnings: 0, created_at: FieldValue.serverTimestamp()});
+      batch.set(db.doc(`courier_wallets/${userRecord.uid}`), {debt: 0, credit_limit: DEFAULT_COURIER_CREDIT_LIMIT, balance: 0, total_earnings: 0, created_at: FieldValue.serverTimestamp()});
     }
     await batch.commit();
     return {uid: userRecord.uid, role};
@@ -270,16 +275,6 @@ exports.publishSystemConfig = onCall(async (data, context) => {
   return {status: 'published', ...result};
 });
 
-function isVendorOpen(vendor, now = new Date()) {
-  const hours = vendor?.opening_hours;
-  if (!hours || typeof hours !== 'object') return true;
-  const [openH, openM] = String(hours.open || '00:00').split(':').map(Number);
-  const [closeH, closeM] = String(hours.close || '23:59').split(':').map(Number);
-  if (![openH, openM, closeH, closeM].every(Number.isFinite)) return false;
-  const current = now.getHours() * 60 + now.getMinutes();
-  const open = openH * 60 + openM; const close = closeH * 60 + closeM;
-  return open <= close ? current >= open && current <= close : current >= open || current <= close;
-}
 
 const ORDER_TRANSITIONS = {
   pending: ['preparing', 'cancelled', 'failed_delivery'],
@@ -519,7 +514,9 @@ exports.claimCourierOrder = onCall(async (data, context) => {
     if (Array.isArray(order.dispatch_candidates) && order.dispatch_candidates.length > 0 && !order.dispatch_candidates.includes(uid)) throw new HttpsError('permission-denied', 'لم يتم عرض هذا الطلب على المندوب');
     const activeOrders = await db.collection('orders').where('courier_id', '==', uid).where('status', 'in', ['picked_up', 'on_the_way']).limit(3).get();
     if (activeOrders.size >= 2) throw new HttpsError('resource-exhausted', 'وصلت إلى الحد الأقصى للطلبات النشطة');
-    if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 0)) throw new HttpsError('failed-precondition', 'تجاوز المندوب حد الائتمان');
+    const creditLimit = effectiveCourierCreditLimit(wallet);
+    if (Number(wallet.debt || 0) >= creditLimit) throw new HttpsError('failed-precondition', 'تجاوز المندوب حد الائتمان');
+    if (Number(wallet.credit_limit) !== creditLimit) tx.set(walletRef, {credit_limit: creditLimit, updated_at: FieldValue.serverTimestamp()}, {merge: true});
     tx.update(orderRef, {courier_id: uid, dispatch_status: 'accepted', dispatch_accepted_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
     tx.create(eventRef, {from_status: order.status, to_status: order.status, actor_id: uid, actor_role: 'courier', action: 'claim', created_at: FieldValue.serverTimestamp()});
   });
@@ -605,8 +602,15 @@ exports.topUpWallet = onCall(async (data, context) => {
   if (!['voucher', 'local_transfer', 'change_to_wallet'].includes(method) || !reference) throw new HttpsError('invalid-argument', 'طريقة الشحن والمرجع مطلوبان');
   const uid = context.auth.uid;
   if (method === 'voucher') {
+    if (!/^[A-Z0-9_-]{4,64}$/i.test(reference)) throw new HttpsError('invalid-argument', 'كود الشحن غير صالح');
     const voucherRef = db.doc('wallet_vouchers/' + reference.toUpperCase());
+    const rateRef = db.doc(`wallet_voucher_rate_limits/${uid}`);
     const userRef = db.doc('users/' + uid);
+    await db.runTransaction(async (tx) => {
+      const rate = await tx.get(rateRef); const now = Date.now(); const state = rate.data() || {}; const windowStart = Number(state.window_start || 0); const inWindow = windowStart > 0 && now - windowStart < 60000; const count = inWindow ? Number(state.count || 0) : 0;
+      if (count >= 5) throw new HttpsError('resource-exhausted', 'تجاوزت عدد محاولات كود الشحن، حاول لاحقاً');
+      tx.set(rateRef, {window_start: inWindow ? windowStart : now, count: count + 1, updated_at: FieldValue.serverTimestamp()}, {merge: true});
+    });
     await db.runTransaction(async (tx) => {
       const [voucher, user] = await Promise.all([tx.get(voucherRef), tx.get(userRef)]);
       if (!voucher.exists || voucher.data()?.used === true || Number(voucher.data()?.amount || 0) <= 0 || !user.exists) throw new HttpsError('failed-precondition', 'كود الشحن غير صالح أو مستخدم');
@@ -617,8 +621,28 @@ exports.topUpWallet = onCall(async (data, context) => {
     });
     return {status: 'completed'};
   }
-  await db.collection('wallet_topups').add({customer_id: uid, method, reference, status: 'pending', created_at: FieldValue.serverTimestamp()});
-  return {status: 'pending'};
+  const topup = await db.collection('wallet_topups').add({customer_id: uid, method, reference, status: 'pending', created_at: FieldValue.serverTimestamp()});
+  return {status: 'pending', topup_id: topup.id};
+});
+
+exports.approveWalletTopUp = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['super_admin']);
+  const topupId = String(data?.topup_id || '').trim(); const decision = String(data?.decision || '').trim(); const amount = Number(data?.amount);
+  if (!topupId || !['approve', 'deny'].includes(decision)) throw new HttpsError('invalid-argument', 'طلب الشحن والقرار مطلوبان');
+  const topupRef = db.doc(`wallet_topups/${topupId}`);
+  await db.runTransaction(async (tx) => {
+    const topupSnap = await tx.get(topupRef); if (!topupSnap.exists) throw new HttpsError('not-found', 'طلب الشحن غير موجود');
+    const topup = topupSnap.data() || {}; if (topup.status !== 'pending') throw new HttpsError('failed-precondition', 'طلب الشحن حُسم سابقاً');
+    const customerRef = db.doc(`users/${topup.customer_id}`); const customerSnap = await tx.get(customerRef); if (!customerSnap.exists) throw new HttpsError('failed-precondition', 'حساب العميل غير موجود');
+    if (decision === 'approve') {
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) throw new HttpsError('invalid-argument', 'مبلغ الشحن غير صالح');
+      tx.update(customerRef, {wallet_balance: FieldValue.increment(amount), updated_at: FieldValue.serverTimestamp()});
+      tx.create(customerRef.collection('wallet_ledger').doc(`topup_${topupId}`), {label: 'اعتماد تحويل محلي', amount, unit: 'ل.س', direction: 'credit', topup_id: topupId, created_at: FieldValue.serverTimestamp()});
+    }
+    tx.update(topupRef, {status: decision === 'approve' ? 'approved' : 'denied', amount: decision === 'approve' ? amount : 0, reviewed_by: context.auth.uid, reviewed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+  });
+  return {topup_id: topupId, status: decision === 'approve' ? 'approved' : 'denied'};
 });
 
 exports.createOrder = onCall(async (data, context) => {
@@ -860,18 +884,43 @@ exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (
   await snap.ref.update({commission, commission_rate: rate, discount_amount: discount, commission_base: commissionBase, total: Number(order.total || Math.max(0, Number(order.subtotal || 0) + Number(order.delivery_fee || 0) - discount)), eta_minutes: etaMinutes, synced: true, updated_at: FieldValue.serverTimestamp()});
 });
 
-exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (event) => {
-  const snap = event.data; if (!snap) return; const order = snap.data(); if (order.fulfillment_type === 'pickup') return;
-  const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get(); if (candidates.empty) return;
+async function offerOrderToCouriers(orderId, order, previousCandidates = []) {
+  if (order.fulfillment_type === 'pickup') return {status: 'skipped'};
+  const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get();
+  if (candidates.empty) {
+    await db.doc(`orders/${orderId}`).update({dispatch_status: 'unassigned', dispatch_escalated: true, dispatch_last_attempt_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+    return {status: 'unassigned'};
+  }
   const vendor = order.vendor_id ? ((await db.doc(`vendors/${order.vendor_id}`).get()).data() || {}) : {};
   const vendorPoint = order.fulfillment_type === 'errand' ? order.pickup_address : vendor.location;
   const distance = (a, b) => {
     if (!a || !b) return Number.MAX_SAFE_INTEGER; const lat = (a.latitude - b.latitude) * Math.PI / 180; const lng = (a.longitude - b.longitude) * Math.PI / 180; const x = Math.sin(lat / 2) ** 2 + Math.cos(a.latitude * Math.PI / 180) * Math.cos(b.latitude * Math.PI / 180) * Math.sin(lng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   };
-  const located = candidates.docs.filter((doc) => doc.data()?.current_location && vendorPoint); if (!located.length) return;
+  const located = candidates.docs.filter((doc) => doc.data()?.current_location && vendorPoint && !previousCandidates.includes(doc.id));
+  if (!located.length) {
+    await db.doc(`orders/${orderId}`).update({dispatch_status: 'unassigned', dispatch_escalated: true, dispatch_last_attempt_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+    return {status: 'unassigned'};
+  }
   const nearest = located.sort((left, right) => distance(left.data().current_location, vendorPoint) - distance(right.data().current_location, vendorPoint)).slice(0, 3);
-  await snap.ref.update({dispatch_candidates: nearest.map((doc) => doc.id), dispatch_status: 'offered', dispatch_distance_km: distance(nearest[0].data().current_location, vendorPoint), updated_at: FieldValue.serverTimestamp()});
-  await Promise.all(nearest.map((doc) => notifyUser(doc.id, 'طلب توصيل جديد', 'يوجد طلب جديد قريب من منطقتك', {order_id: event.params.orderId})));
+  const attempts = Number(order.dispatch_attempts || 0) + 1;
+  await db.doc(`orders/${orderId}`).update({dispatch_candidates: nearest.map((doc) => doc.id), dispatch_status: 'offered', dispatch_attempts: attempts, dispatch_offered_at: FieldValue.serverTimestamp(), dispatch_distance_km: distance(nearest[0].data().current_location, vendorPoint), updated_at: FieldValue.serverTimestamp()});
+  await Promise.all(nearest.map((doc) => notifyUser(doc.id, 'طلب توصيل جديد', 'يوجد طلب جديد قريب من منطقتك', {order_id: orderId})));
+  return {status: 'offered', candidates: nearest.map((doc) => doc.id)};
+}
+exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (event) => {
+  const snap = event.data; if (!snap) return; const order = snap.data();
+  return offerOrderToCouriers(event.params.orderId, order);
+});
+exports.retryStaleDispatch = scheduled('every 2 minutes', async () => {
+  const snapshot = await db.collection('orders').where('dispatch_status', '==', 'offered').limit(DISPATCH_SCAN_LIMIT).get();
+  const now = Date.now(); let retried = 0; let escalated = 0;
+  for (const doc of snapshot.docs) {
+    const order = doc.data() || {}; const offeredAt = order.dispatch_offered_at?.toMillis?.() || 0;
+    if (!offeredAt || now - offeredAt < DISPATCH_OFFER_TIMEOUT_MS || !['pending', 'preparing', 'ready_for_pickup'].includes(order.status)) continue;
+    const result = await offerOrderToCouriers(doc.id, order, Array.isArray(order.dispatch_candidates) ? order.dispatch_candidates : []);
+    if (result?.status === 'offered') retried += 1; else if (result?.status === 'unassigned') escalated += 1;
+  }
+  return {scanned: snapshot.size, retried, escalated};
 });
 
 exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) => {
@@ -889,7 +938,7 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
     const admin = await db.collection('users').where('vendor_id', '==', after.vendor_id).where('role', '==', 'vendor_admin').limit(1).get(); if (!admin.empty) await notifyUser(admin.docs[0].id, 'تحديث طلب المتجر', body, {order_id: event.params.orderId});
   }
   if (statusChanged && after.status === 'delivered' && after.courier_id) {
-    const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = Math.max(0, Number(after.subtotal || 0)); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
+    const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = courierCashDebt(after); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
       const existing = await tx.get(eventRef); if (existing.exists) return; tx.set(walletRef, {debt: FieldValue.increment(debt), total_earnings: FieldValue.increment(earnings), balance: FieldValue.increment(earnings), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(eventRef, {type: 'delivery', order_id: event.params.orderId, debt, earnings, created_at: FieldValue.serverTimestamp()});
     }); const customerRef = db.doc(`users/${after.customer_id}`); const loyaltyRef = customerRef.collection('loyalty_ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
       const existing = await tx.get(loyaltyRef); if (existing.exists) return; const points = Math.floor(Math.max(0, Number(after.subtotal || 0) - Number(after.discount_amount || 0)) / Math.max(1, Number((await db.doc('system_config/main').get()).data()?.loyalty_points_divisor || 1000)) * Number((await db.doc('system_config/main').get()).data()?.loyalty_points_rate || 0)); tx.set(customerRef, {loyalty_points: FieldValue.increment(points), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(loyaltyRef, {points, order_id: event.params.orderId, created_at: FieldValue.serverTimestamp()});

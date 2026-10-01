@@ -94,7 +94,7 @@ service cloud.firestore {
     }
     match /users/{uid}/wallet_ledger/{entryId} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
     match /users/{uid}/loyalty_ledger/{entryId} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
-    match /wallet_topups/{topupId} { allow read: if signedIn() && resource.data.customer_id == request.auth.uid; allow create: if false; allow update, delete: if admin(); }
+    match /wallet_topups/{topupId} { allow read: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid); allow create, update, delete: if false; }
     // طلبات مراجعة تحويل الفكة: تُنشأ وتُعتمد من الدوال فقط، والعميل يقرأ طلباته.
     match /change_requests/{orderId} { allow read: if admin() || (signedIn() && (resource.data.courier_id == request.auth.uid || resource.data.customer_id == request.auth.uid)); allow write: if false; }
     match /wallet_vouchers/{code} { allow read, write: if admin(); }

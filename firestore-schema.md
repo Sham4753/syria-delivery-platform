@@ -49,7 +49,7 @@
 `label`, `building`, `floor`, `apartment`, `landmark`, `location` (lat/lng أو GeoPoint), `is_default`, `created_at`.
 
 ### `courier_wallets/{courierId}`
-`debt`, `credit_limit` (افتراضي 100)، `balance`, `total_earnings`, `updated_at`. عند تسليم COD يزيد `debt` بقيمة `subtotal` وتبقى `delivery_fee` ضمن أرباح المندوب.
+`debt`, `credit_limit` (افتراضي 1,000,000 ل.س؛ تُرقّى القيمة القديمة 100 تلقائياً)، `balance`, `total_earnings`, `updated_at`. عند التسليم يزيد `debt` بقيمة الجزء النقدي المستحق للمتجر بعد طرح رسم التوصيل؛ طلبات المحفظة لا تزيد الدين، وتبقى `delivery_fee` ضمن أرباح المندوب.
 
 ### `courier_wallets/{courierId}/settlements/{settlementId}`
 `amount`, `received_at`, `received_by`.
@@ -62,6 +62,9 @@
 
 ### `financial_ledger/{entryId}`
 دفتر مالي غير قابل للتعديل من التطبيقات. كل قيد يحمل `type`, `direction`, `amount`, `shift_id?`, `settlement_id?`, `owner_id?`, `actor_id`, و`created_at`. اعتماد التسوية يكتب قيد الفروقات مرة واحدة داخل Transaction.
+
+### `wallet_topups/{topupId}`
+`customer_id`, `method` (`local_transfer|change_to_wallet`), `reference`, `status` (`pending|approved|denied`), `amount?`, `reviewed_by?`, `reviewed_at?`, `created_at`. تُنشأ عبر `topUpWallet` ويُحسم الطلب عبر `approveWalletTopUp` فقط.
 
 ### `coupons/{CODE}`
 `type` (`percentage|fixed_amount|free_delivery`), `value`, `min_order_amount`, `expires_at?`, `usage_limit_total?`, `usage_limit_per_customer`, `used_count`, `is_active`, `source`, `restricted_to_customer?`.

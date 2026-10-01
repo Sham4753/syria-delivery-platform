@@ -111,6 +111,7 @@ class HttpsError extends Error { constructor(code, message) { super(message); th
 const db = new FakeDb();
 const stubs = {
   'firebase-functions/v2/firestore': {onDocumentCreated: (_o, h) => h, onDocumentWritten: (_o, h) => h},
+  'firebase-functions/v2/scheduler': {onSchedule: (_o, h) => h},
   'firebase-functions/v1': {region: () => ({https: {onCall: (h) => h}})},
   'firebase-functions/v1/https': {HttpsError},
   'firebase-admin/app': {initializeApp: () => {}},
@@ -122,6 +123,7 @@ const originalLoad = Module._load;
 Module._load = function (request, ...rest) { return stubs[request] || originalLoad.call(this, request, ...rest); };
 const indexPath = path.resolve(process.env.FUNCTIONS_INDEX || path.join(__dirname, '..', 'functions', 'index.js'));
 const fns = require(indexPath);
+const {effectiveCourierCreditLimit, courierCashDebt, isVendorOpen} = require('../functions/operational-logic');
 
 // ---------------------------------------------------------------- helpers
 const as = (uid) => ({auth: {uid}});
@@ -344,6 +346,48 @@ const order = (extra) => ({customer_id: 'cust1', vendor_id: 'v1', zone_id: 'z1',
     assert(!out.vendor_compensation_due); assert(!out.courier_compensation_due);
     const back = await trigger('t4', order({status: 'failed_delivery', failure_reason: 'customer_refused'}), order({status: 'returned', failure_reason: 'customer_refused'}));
     assert(!back.vendor_compensation_due);
+  });
+
+  // ------------------------------------------------------------ operational fixes
+  console.log('operational fixes');
+  await test('legacy courier credit limit is upgraded and does not block a normal order', async () => {
+    seedWorld(); db.seed('courier_wallets/courier1', {debt: 50000, credit_limit: 100, balance: 0});
+    db.seed('orders/credit1', order({status: 'pending', dispatch_candidates: ['courier1']}));
+    await fns.claimCourierOrder({order_id: 'credit1'}, as('courier1'));
+    assert.strictEqual(db.read('courier_wallets/courier1').credit_limit, 1000000);
+  });
+  await test('courier debt uses cash due excluding delivery earnings and ignores wallet orders', async () => {
+    seedWorld(); db.seed('orders/debt-wallet', order({status: 'delivered', payment_method: 'wallet', cash_due: 0, delivery_fee: 2000, subtotal: 10000, courier_id: 'courier1'}));
+    await trigger('debt-wallet', order({status: 'on_the_way', courier_id: 'courier1'}), db.read('orders/debt-wallet'));
+    assert.strictEqual(db.read('courier_wallets/courier1').debt, 50000);
+    seedWorld(); db.seed('orders/debt-cash', order({status: 'delivered', payment_method: 'cash_on_delivery', cash_due: 12000, delivery_fee: 2000, subtotal: 10000, courier_id: 'courier1'}));
+    await trigger('debt-cash', order({status: 'on_the_way', courier_id: 'courier1'}), db.read('orders/debt-cash'));
+    assert.strictEqual(db.read('courier_wallets/courier1').debt, 60000); assert.strictEqual(db.read('courier_wallets/courier1/ledger/debt-cash').debt, 10000);
+  });
+  await test('vendor hours are evaluated in Syria time, not the server UTC clock', async () => {
+    const vendor = {opening_hours: {open: '09:00', close: '23:00'}};
+    assert.strictEqual(isVendorOpen(vendor, new Date('2026-01-01T06:00:00Z')), true);
+    assert.strictEqual(isVendorOpen(vendor, new Date('2026-01-01T05:59:00Z')), false);
+    assert.strictEqual(courierCashDebt({payment_method: 'wallet', cash_due: 12000, delivery_fee: 2000}), 0);
+    assert.strictEqual(effectiveCourierCreditLimit({credit_limit: 100}), 1000000);
+  });
+  await test('admin approval credits a local transfer exactly once', async () => {
+    seedWorld(); const created = await fns.topUpWallet({method: 'local_transfer', reference: 'TRX-1'}, as('cust1'));
+    await fns.approveWalletTopUp({topup_id: created.topup_id, decision: 'approve', amount: 25000}, as('admin'));
+    assert.strictEqual(db.read('users/cust1').wallet_balance, 25100); assert.strictEqual(db.read(`users/cust1/wallet_ledger/topup_${created.topup_id}`).amount, 25000);
+    await fails(fns.approveWalletTopUp({topup_id: created.topup_id, decision: 'approve', amount: 25000}, as('admin')), 'failed-precondition', 'duplicate topup approval');
+  });
+  await test('voucher redemption rate-limits failed guesses', async () => {
+    seedWorld();
+    for (let i = 0; i < 5; i += 1) await fails(fns.topUpWallet({method: 'voucher', reference: `BAD-${i}`}, as('cust1')), 'failed-precondition', `bad voucher ${i}`);
+    await fails(fns.topUpWallet({method: 'voucher', reference: 'BAD-6'}, as('cust1')), 'resource-exhausted', 'sixth voucher attempt');
+  });
+  await test('stale dispatch is re-offered to a new courier and escalates when none remain', async () => {
+    seedWorld(); db.seed('vendors/v1', {is_active: true, zone_id: 'z1', is_busy: false, commission_rate: 10, location: {latitude: 33.5, longitude: 36.2}}); db.seed('couriers/courier2', {zone_id: 'z1', is_available: true, current_location: {latitude: 33.5, longitude: 36.3}}); db.seed('users/courier2', {role: 'courier'});
+    db.seed('orders/retry1', order({status: 'pending', dispatch_status: 'offered', dispatch_candidates: ['courier1'], dispatch_attempts: 1, dispatch_offered_at: new Timestamp(Date.now() - 11 * 60 * 1000)})); db.seed('couriers/courier1', {zone_id: 'z1', is_available: true, current_location: {latitude: 33.5, longitude: 36.31}});
+    await fns.retryStaleDispatch(); assert.deepStrictEqual(db.read('orders/retry1').dispatch_candidates, ['courier2']);
+    db.seed('orders/retry2', order({status: 'pending', dispatch_status: 'offered', dispatch_candidates: ['courier1'], dispatch_offered_at: new Timestamp(Date.now() - 11 * 60 * 1000)})); db.seed('couriers/courier2', {zone_id: 'z1', is_available: false});
+    await fns.retryStaleDispatch(); assert.strictEqual(db.read('orders/retry2').dispatch_status, 'unassigned'); assert.strictEqual(db.read('orders/retry2').dispatch_escalated, true);
   });
 
   // ------------------------------------------------------------ commission
