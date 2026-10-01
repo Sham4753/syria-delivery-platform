@@ -7,7 +7,8 @@ import 'login_screen.dart';
 
 class MerchantHome extends StatefulWidget {
   final String vendorId;
-  const MerchantHome({Key? key, required this.vendorId});
+  final String role;
+  const MerchantHome({Key? key, required this.vendorId, required this.role});
   @override
   State<MerchantHome> createState() => _MerchantHomeState();
 }
@@ -15,7 +16,9 @@ class MerchantHome extends StatefulWidget {
 class _MerchantHomeState extends State<MerchantHome> {
   int tab = 0;
   Timer? orderAlertTimer;
+  Timer? kdsClock;
   bool alerting = false;
+  DateTime kdsNow = DateTime.now();
   Stream<QuerySnapshot> get products => FirebaseFirestore.instance
       .collection('vendors')
       .doc(widget.vendorId)
@@ -31,6 +34,14 @@ class _MerchantHomeState extends State<MerchantHome> {
       .collection('vendors')
       .doc(widget.vendorId)
       .update({'is_busy': busy, 'updated_at': FieldValue.serverTimestamp()});
+
+  @override
+  void initState() {
+    super.initState();
+    kdsClock = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() => kdsNow = DateTime.now());
+    });
+  }
 
   Future<void> shiftAction() async {
     final activeRef = FirebaseFirestore.instance
@@ -79,6 +90,7 @@ class _MerchantHomeState extends State<MerchantHome> {
   @override
   void dispose() {
     orderAlertTimer?.cancel();
+    kdsClock?.cancel();
     super.dispose();
   }
 
@@ -172,7 +184,7 @@ class _MerchantHomeState extends State<MerchantHome> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [_orders(), _menu(), _reports()];
+    final pages = [_kds(), _menu(), _reports()];
     return Scaffold(
       appBar: AppBar(
         title: StreamBuilder<DocumentSnapshot>(
@@ -233,7 +245,7 @@ class _MerchantHomeState extends State<MerchantHome> {
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.receipt_long),
-            label: 'الطلبات',
+                  label: 'شاشة المطبخ',
           ),
           NavigationDestination(icon: Icon(Icons.menu_book), label: 'القائمة'),
           NavigationDestination(icon: Icon(Icons.analytics), label: 'التقارير'),
@@ -241,6 +253,60 @@ class _MerchantHomeState extends State<MerchantHome> {
       ),
     );
   }
+
+  DateTime _orderClock(Map<String, dynamic> data) {
+    final stamp = data['prep_started_at'] ?? data['created_at'];
+    if (stamp is Timestamp) return stamp.toDate();
+    return kdsNow;
+  }
+
+  String _ageLabel(Map<String, dynamic> data) {
+    final minutes = kdsNow.difference(_orderClock(data)).inMinutes.clamp(0, 999);
+    return minutes == 0 ? 'الآن' : 'منذ $minutes د';
+  }
+
+  Color _ageColor(Map<String, dynamic> data) {
+    final limit = (data['prep_minutes'] as num?)?.toInt() ?? 20;
+    final elapsed = kdsNow.difference(_orderClock(data)).inMinutes;
+    if (elapsed > limit) return Colors.red;
+    if (elapsed >= (limit * 0.75).round()) return Colors.orange;
+    return Colors.green;
+  }
+
+  Widget _kdsCard(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final items = (data['items'] as List? ?? []).whereType<Map>().toList();
+    final status = data['status'] ?? 'pending';
+    final color = _ageColor(data);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [Expanded(child: Text('#${doc.id.substring(0, 6)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))), Text(_ageLabel(data), style: TextStyle(color: color, fontWeight: FontWeight.bold))]),
+          const Divider(),
+          ...items.map((item) => Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Text('${item['quantity'] ?? 1} × ${item['name'] ?? 'صنف'}', style: const TextStyle(fontSize: 16)))),
+          if ((data['notes'] ?? '').toString().isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text('ملاحظة: ${data['notes']}', style: const TextStyle(color: Colors.deepOrange))),
+          const SizedBox(height: 8),
+          Row(children: [Text('${data['total'] ?? 0} ل.س'), const Spacer(), if (status == 'pending') FilledButton(onPressed: () => updateOrder(doc.id, 'preparing', prepMinutes: (data['prep_minutes'] as num?)?.toInt() ?? 20), child: const Text('قبول وتحضير')), if (status == 'preparing') FilledButton(onPressed: () => updateOrder(doc.id, 'ready_for_pickup'), child: const Text('جاهز للاستلام'))]),
+        ]),
+      ),
+    );
+  }
+
+  Widget _kdsColumn(String title, List<QueryDocumentSnapshot> docs, Color color) => Expanded(child: Container(margin: const EdgeInsets.all(6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(14)), child: Column(children: [Row(children: [Expanded(child: Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: color))), CircleAvatar(radius: 12, child: Text('${docs.length}'))]), const SizedBox(height: 8), Expanded(child: ListView(children: docs.map(_kdsCard).toList()))])));
+
+  Widget _kds() => StreamBuilder<QuerySnapshot>(
+    stream: orders,
+    builder: (c, s) {
+      if (!s.hasData) return const Center(child: CircularProgressIndicator());
+      final docs = s.data!.docs.where((d) => ['pending', 'preparing', 'ready_for_pickup', 'picked_up'].contains((d.data() as Map<String, dynamic>)['status'])).toList();
+      syncOrderAlert(docs.any((d) => (d.data() as Map<String, dynamic>)['status'] == 'pending'));
+      final columns = <String, List<QueryDocumentSnapshot>>{for (final status in ['pending', 'preparing', 'ready_for_pickup', 'picked_up']) status: []};
+      for (final doc in docs) columns[(doc.data() as Map<String, dynamic>)['status'] ?? 'pending']!.add(doc);
+      return LayoutBuilder(builder: (context, constraints) => SingleChildScrollView(scrollDirection: Axis.horizontal, child: SizedBox(width: constraints.maxWidth < 1000 ? 1000 : constraints.maxWidth, child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [_kdsColumn('جديد', columns['pending']!, Colors.blue), _kdsColumn('قيد التحضير', columns['preparing']!, Colors.orange), _kdsColumn('جاهز', columns['ready_for_pickup']!, Colors.green), _kdsColumn('تم الاستلام', columns['picked_up']!, Colors.grey)]))));
+    },
+  );
 
   Widget _orders() => StreamBuilder<QuerySnapshot>(
     stream: orders,

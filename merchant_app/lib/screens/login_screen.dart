@@ -26,7 +26,7 @@ class _LoginPageState extends State<LoginPage> {
       );
     } catch (_) {
       setState(() {
-        error = 'تعذر الدخول. يجب إنشاء الحساب يدويًا ومنحه دور vendor_admin.';
+        error = 'تعذر الدخول. تحقق من الحساب والدور المرتبط بالمتجر.';
       });
     }
   }
@@ -89,7 +89,7 @@ class MerchantGate extends StatelessWidget {
       builder: (context, snapshot) {
         final profile = snapshot.data?.data() as Map<String, dynamic>?;
         final valid =
-            profile?['role'] == 'vendor_admin' && profile?['vendor_id'] != null;
+            ['vendor_admin', 'vendor_supervisor', 'vendor_cashier', 'kitchen_staff'].contains(profile?['role']) && profile?['vendor_id'] != null;
 
         if (!valid) {
           return Scaffold(
@@ -98,14 +98,14 @@ class MerchantGate extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  'يجب أن يحتوي users/{uid} على role: vendor_admin وvendor_id قبل استخدام التطبيق.',
+                  'يجب أن يحتوي users/{uid} على دور مطعم صالح وvendor_id قبل استخدام التطبيق.',
                 ),
               ),
             ),
           );
         }
 
-        return MerchantHome(vendorId: profile!['vendor_id']);
+        return MerchantHome(vendorId: profile!['vendor_id'], role: profile!['role']);
       },
     );
   }

@@ -16,6 +16,7 @@ const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
 const {bankTransferLedgerEntries, assertPaymentTransition} = require('./financial-ledger');
+const {VENDOR_ROLES, canTransition} = require('./kds-policy');
 
 initializeApp();
 const db = getFirestore();
@@ -124,17 +125,17 @@ exports.createStaffAccount = onCall(async (data, context) => {
   const callerUser = await db.doc(`users/${caller.uid}`).get();
   if (callerUser.data()?.role !== 'super_admin') throw new HttpsError('permission-denied', 'هذه العملية متاحة للأدمن فقط');
   const {role, email, password, name, phone, photo_url: photoUrl, vehicle_plate: vehiclePlate, vehicle_type: vehicleType, zone_id: zoneId, vendor_id: vendorId} = data || {};
-  if (!['courier', 'vendor_admin'].includes(role)) throw new HttpsError('invalid-argument', 'نوع الحساب غير مدعوم');
+  if (!['courier', ...VENDOR_ROLES].includes(role)) throw new HttpsError('invalid-argument', 'نوع الحساب غير مدعوم');
   if (!email || !password || String(password).length < 6) throw new HttpsError('invalid-argument', 'البريد وكلمة المرور (6 أحرف على الأقل) مطلوبان');
   if (role === 'courier' && (!name || !phone || !zoneId)) throw new HttpsError('invalid-argument', 'اسم المندوب وهاتفه ومنطقته مطلوبة');
-  if (role === 'vendor_admin' && !vendorId) throw new HttpsError('invalid-argument', 'اختر المزود المرتبط بالحساب');
-  if (role === 'vendor_admin' && !(await db.doc(`vendors/${vendorId}`).get()).exists) throw new HttpsError('not-found', 'المزود غير موجود');
+  if (VENDOR_ROLES.includes(role) && !vendorId) throw new HttpsError('invalid-argument', 'اختر المزود المرتبط بالحساب');
+  if (VENDOR_ROLES.includes(role) && !(await db.doc(`vendors/${vendorId}`).get()).exists) throw new HttpsError('not-found', 'المزود غير موجود');
 
   let userRecord;
   try {
     userRecord = await getAuth().createUser({email: String(email).trim().toLowerCase(), password: String(password), displayName: name || undefined});
     const batch = db.batch();
-    batch.set(db.doc(`users/${userRecord.uid}`), {role, email: userRecord.email, ...(role === 'vendor_admin' ? {vendor_id: vendorId} : {}), created_at: FieldValue.serverTimestamp(), created_by: caller.uid});
+    batch.set(db.doc(`users/${userRecord.uid}`), {role, email: userRecord.email, ...(VENDOR_ROLES.includes(role) ? {vendor_id: vendorId} : {}), created_at: FieldValue.serverTimestamp(), created_by: caller.uid});
     if (role === 'courier') {
       batch.set(db.doc(`couriers/${userRecord.uid}`), {name: String(name).trim(), phone: String(phone).trim(), photo_url: String(photoUrl || '').trim(), vehicle_plate: String(vehiclePlate || '').trim(), vehicle_type: String(vehicleType || '').trim(), zone_id: zoneId, is_available: true, created_at: FieldValue.serverTimestamp()});
       batch.set(db.doc(`courier_wallets/${userRecord.uid}`), {debt: 0, credit_limit: 100, balance: 0, total_earnings: 0, created_at: FieldValue.serverTimestamp()});
@@ -389,7 +390,7 @@ async function resolveShiftOwner(uid, requestedOwnerType, requestedOwnerId) {
   const ownerType = String(requestedOwnerType || (profile.role === 'courier' ? 'courier' : 'vendor'));
   const ownerId = String(requestedOwnerId || (ownerType === 'courier' ? uid : profile.vendor_id || ''));
   const isAdmin = profile.role === 'super_admin';
-  const allowed = isAdmin || (ownerType === 'courier' && profile.role === 'courier' && ownerId === uid) || (ownerType === 'vendor' && profile.role === 'vendor_admin' && ownerId === profile.vendor_id);
+  const allowed = isAdmin || (ownerType === 'courier' && profile.role === 'courier' && ownerId === uid) || (ownerType === 'vendor' && VENDOR_ROLES.includes(profile.role) && ownerId === profile.vendor_id);
   if (!allowed || !['vendor', 'courier'].includes(ownerType) || !ownerId) throw new HttpsError('permission-denied', 'لا تملك صلاحية هذه الوردية');
   return {ownerType, ownerId, isAdmin, profile};
 }
@@ -581,7 +582,7 @@ exports.transitionOrderStatus = onCall(async (data, context) => {
   if (!orderId || !ORDER_TRANSITIONS[nextStatus]) throw new HttpsError('invalid-argument', 'الطلب والحالة الجديدة مطلوبان');
   if (prepMinutes !== null && (!Number.isInteger(prepMinutes) || prepMinutes < 1 || prepMinutes > 240)) throw new HttpsError('invalid-argument', 'مدة التحضير غير صالحة');
   const uid = context.auth.uid;
-  const user = await requireRole(uid, ['super_admin', 'vendor_admin', 'courier']);
+  const user = await requireRole(uid, ['super_admin', ...VENDOR_ROLES, 'courier']);
   const orderRef = db.doc(`orders/${orderId}`);
   const eventRef = orderRef.collection('events').doc();
   let result;
@@ -592,16 +593,17 @@ exports.transitionOrderStatus = onCall(async (data, context) => {
     const current = String(before.status || 'pending');
     if (!ORDER_TRANSITIONS[current]?.includes(nextStatus)) throw new HttpsError('failed-precondition', `لا يمكن نقل الطلب من ${current} إلى ${nextStatus}`);
     if (nextStatus === 'delivered') throw new HttpsError('permission-denied', 'تأكيد التسليم يتطلب رمز OTP من العميل');
-    if (user.role === 'vendor_admin' && (before.vendor_id !== user.vendor_id || !['preparing', 'ready_for_pickup', 'cancelled'].includes(nextStatus))) throw new HttpsError('permission-denied', 'انتقال الحالة غير مسموح للتاجر');
+    if (VENDOR_ROLES.includes(user.role) && (before.vendor_id !== user.vendor_id || !canTransition(user.role, current, nextStatus))) throw new HttpsError('permission-denied', 'انتقال الحالة غير مسموح لهذا الدور');
     if (user.role === 'courier' && (before.courier_id !== uid || !['picked_up', 'on_the_way', 'failed_delivery', 'returned'].includes(nextStatus))) throw new HttpsError('permission-denied', 'انتقال الحالة غير مسموح للمندوب');
     if (user.role === 'super_admin' && nextStatus === 'delivered') throw new HttpsError('permission-denied', 'التسليم لا يتم من لوحة الإدارة');
     const changes = {status: nextStatus, updated_at: FieldValue.serverTimestamp(), status_changed_by: uid};
     if (prepMinutes !== null) changes.prep_minutes = prepMinutes;
     if (['cancelled', 'failed_delivery', 'returned'].includes(nextStatus)) {
-      changes.cancelled_by = user.role === 'vendor_admin' ? 'vendor' : user.role;
+      changes.cancelled_by = VENDOR_ROLES.includes(user.role) ? 'vendor' : user.role;
       changes.cancellation_reason = reason || 'بدون سبب';
       if (nextStatus !== 'cancelled') changes.failure_reason = reason || 'تعذر التسليم';
     }
+    if (nextStatus === 'preparing') changes.prep_started_at = FieldValue.serverTimestamp();
     if (nextStatus === 'ready_for_pickup') changes.ready_at = FieldValue.serverTimestamp();
     if (nextStatus === 'picked_up') changes.picked_up_at = FieldValue.serverTimestamp();
     if (nextStatus === 'on_the_way') changes.on_the_way_at = FieldValue.serverTimestamp();

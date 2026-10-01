@@ -5,7 +5,8 @@ service cloud.firestore {
     function user() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
     function role(r) { return signedIn() && user().role == r; }
     function admin() { return role('super_admin'); }
-    function vendorOwner(vendorId) { return role('vendor_admin') && user().vendor_id == vendorId; }
+    function vendorOwner(vendorId) { return (role('vendor_admin') || role('vendor_supervisor') || role('vendor_cashier') || role('kitchen_staff')) && user().vendor_id == vendorId; }
+    function vendorManager(vendorId) { return (role('vendor_admin') || role('vendor_supervisor')) && user().vendor_id == vendorId; }
     function ownerOf(ownerType, ownerId, vendorId) { return admin() || (ownerType == 'courier' && role('courier') && request.auth.uid == ownerId) || (ownerType == 'vendor' && vendorOwner(vendorId)); }
     function orderParty(orderId) {
       let o = get(/databases/$(database)/documents/orders/$(orderId)).data;
@@ -43,13 +44,13 @@ service cloud.firestore {
       // Internal vendor documents are not public; customers use public_vendors.
       allow read: if admin() || vendorOwner(vendorId);
       allow create, delete: if admin();
-      allow update: if admin() || (vendorOwner(vendorId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'address', 'phone', 'is_busy', 'opening_hours', 'updated_at']));
+      allow update: if admin() || (vendorManager(vendorId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'address', 'phone', 'is_busy', 'opening_hours', 'updated_at']));
       match /products/{productId} {
         // Guests may browse available products; authenticated users and staff
         // retain the same access as before. Cart, address and order actions
         // still require authentication in the client and callable functions.
         allow read: if resource.data.is_available == true || admin() || vendorOwner(vendorId);
-        allow write: if admin() || vendorOwner(vendorId);
+        allow write: if admin() || vendorManager(vendorId);
       }
     }
     match /public_vendors/{vendorId} { allow read: if resource.data.is_active == true; allow write: if false; }

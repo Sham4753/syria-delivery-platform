@@ -36,7 +36,11 @@
 `zone_id`, `name`, `polygon` (array of `{lat, lng}`), `center` (GeoPoint), `is_active`, `updated_at`.
 
 ### `orders/{orderId}`
-`customer_id`, `vendor_id`, `courier_id` (null until assigned), `zone_id`, `items[]`, `subtotal`, `commission`, `delivery_fee`, `total`, `idempotency_key`, `status` (`pending|preparing|ready_for_pickup|picked_up|on_the_way|delivered|cancelled`), `cancelled_by?` (`customer|vendor|admin`), `cancellation_reason?`, `commission_voided?`, `courier_compensation_due?`, `fulfillment_type` (`delivery|pickup`), `scheduled_for?` (Timestamp), `delivery_address` (snapshot object), `landmark?`, `notes?`, `payment_method` (`cash_on_delivery|syrtel_cash|bemo_wallet`), `payment_status` (`unpaid|pending|paid|failed`), `prep_minutes?`, `created_at`, `updated_at`, `synced`. التاجر يغير `status` إلى `preparing` دون تعيين المندوب؛ المندوب يكتب `courier_id` فقط، وتبقى الحالة كما هي.
+`customer_id`, `vendor_id`, `courier_id` (null until assigned), `zone_id`, `items[]`, `subtotal`, `commission`, `delivery_fee`, `total`, `idempotency_key`, `status` (`pending|preparing|ready_for_pickup|picked_up|on_the_way|delivered|cancelled`), `cancelled_by?` (`customer|vendor|admin`), `cancellation_reason?`, `commission_voided?`, `courier_compensation_due?`, `fulfillment_type` (`delivery|pickup`), `scheduled_for?` (Timestamp), `delivery_address` (snapshot object), `landmark?`, `notes?`, `payment_method` (`cash_on_delivery|bank_transfer|wallet|hybrid`), `payment_status` (`unpaid|pending|paid|failed`), `prep_minutes?`, `prep_started_at?`, `ready_at?`, `created_at`, `updated_at`, `synced`. شاشة KDS تعرض `pending`, `preparing`, `ready_for_pickup`, و`picked_up`. بدء التحضير يكتب `prep_started_at` خادميًا، ولا يغير فريق المطبخ أي حقل مالي.
+
+### أدوار فريق المطعم
+
+تُحفظ في `users/{uid}.role` مع `vendor_id`: `vendor_admin`، `vendor_supervisor`، `vendor_cashier`، `kitchen_staff`. تُفرض صلاحية الانتقال خادميًا؛ يستطيع المطبخ قبول الطلب ووضعه جاهزًا، ويستطيع الكاشير الإلغاء، بينما يملك المشرف صلاحيات التشغيل الأوسع.
 
 ### `order_idempotency/{customerId_hash}`
 
