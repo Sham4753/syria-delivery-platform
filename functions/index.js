@@ -31,6 +31,8 @@ const {bankTransferLedgerEntries, assertPaymentTransition} = require('./financia
 const {normalizeProviderConfig, verifySignature, providerEvent, providerStatusForEvent, providerLedgerEntries} = require('./payment-provider');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
 const {OFFER_TTL_MS, rankCouriers, pointOf} = require('./dispatch-engine');
+const {isWithinOpeningHours} = require('./time-utils');
+const {normalizeTopUpRequest, consumeTopUpQuotas} = require('./wallet-guard');
 
 initializeApp();
 const db = getFirestore();
@@ -383,15 +385,7 @@ exports.publishPaymentProviderSettings = onCall(async (data, context) => {
 });
 
 function isVendorOpen(vendor, now = new Date()) {
-  const hours = vendor?.opening_hours;
-  if (!hours || typeof hours !== 'object') return true;
-  const [openH, openM] = String(hours.open || '00:00').split(':').map(Number);
-  const [closeH, closeM] = String(hours.close || '23:59').split(':').map(Number);
-  if (![openH, openM, closeH, closeM].every(Number.isFinite)) return false;
-  const parts = new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Damascus', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).formatToParts(now);
-  const current = Number(parts.find((part) => part.type === 'hour')?.value) * 60 + Number(parts.find((part) => part.type === 'minute')?.value);
-  const open = openH * 60 + openM; const close = closeH * 60 + closeM;
-  return open <= close ? current >= open && current <= close : current >= open || current <= close;
+  return isWithinOpeningHours(vendor?.opening_hours, now);
 }
 
 const ORDER_TRANSITIONS = {
@@ -963,11 +957,9 @@ exports.cancelOrder = onCall(async (data, context) => {
 
 exports.topUpWallet = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
-  const method = String(data?.method || '');
-  const rawReference = String(data?.reference || '').trim();
-  const reference = method === 'voucher' ? rawReference.toUpperCase() : rawReference.slice(0, 120);
-  if (!['voucher', 'local_transfer', 'change_to_wallet'].includes(method) || !reference || (method === 'voucher' && !/^[A-Z0-9_-]{3,120}$/.test(reference)) ) throw new HttpsError('invalid-argument', 'طريقة الشحن والمرجع مطلوبان');
+  const {method, reference} = normalizeTopUpRequest(data, HttpsError);
   const uid = context.auth.uid;
+  await consumeTopUpQuotas({db, uid, HttpsError, consumeQuota});
   if (method === 'voucher') {
     const voucherRef = db.doc('wallet_vouchers/' + reference.toUpperCase());
     const userRef = db.doc('users/' + uid);

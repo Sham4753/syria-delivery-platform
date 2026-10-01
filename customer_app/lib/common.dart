@@ -91,26 +91,37 @@ Future<List<Map<String, dynamic>>> loadVendors(String category) async {
   }
 }
 
-bool vendorIsOpen(Map<String, dynamic> data) {
-  final hours = data['opening_hours'] as Map<String, dynamic>?;
-  if (hours == null) return true;
-  final now = DateTime.now();
-  final current = now.hour * 60 + now.minute;
+/// الوقت الحالي بتوقيت دمشق (UTC+3 ثابتاً؛ ألغت سوريا التوقيت الصيفي في 2022).
+/// نعتمد عليه بدل ساعة الجوال حتى تطابق النتيجة ما يتحقق منه السيرفر عند الطلب.
+DateTime damascusNow([DateTime? now]) =>
+    (now ?? DateTime.now()).toUtc().add(const Duration(hours: 3));
 
-  int parse(String value) {
-    final parts = value.split(':');
-    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+/// true إذا كان المتجر ضمن ساعات العمل. يدعم المتاجر التي تغلق بعد منتصف الليل
+/// (مثل 18:00 إلى 02:00). بدون opening_hours = مفتوح، وساعات تالفة = مغلق
+/// (نفس سلوك السيرفر في isVendorOpen).
+bool vendorIsOpen(Map<String, dynamic> data, {DateTime? now}) {
+  final hours = data['opening_hours'];
+  if (hours is! Map) return true;
+
+  int? parse(Object? value, String fallback) {
+    final text = '${value ?? fallback}'.trim();
+    final parts = text.split(':');
+    if (parts.length != 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return h * 60 + m;
   }
 
-  try {
-    final opening = parse('${hours['open'] ?? '00:00'}');
-    final closing = parse('${hours['close'] ?? '23:59'}');
-    return opening <= closing
-        ? current >= opening && current <= closing
-        : current >= opening || current <= closing;
-  } catch (_) {
-    return true;
-  }
+  final open = parse(hours['open'], '00:00');
+  final close = parse(hours['close'], '23:59');
+  if (open == null || close == null) return false;
+
+  final local = damascusNow(now);
+  final current = local.hour * 60 + local.minute;
+  return open <= close
+      ? current >= open && current <= close
+      : current >= open || current <= close;
 }
 
 const useFirebaseEmulators = bool.fromEnvironment(

@@ -6,6 +6,7 @@
     "seed:emulator": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 node scripts/seed-emulator.js",
     "backfill:public-vendors": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 GCLOUD_PROJECT=demo-syria-delivery node scripts/backfill-public-vendors.js",
     "test:vendor-publication": "node scripts/test-public-vendor-publication.js",
-    "test:security-contract": "node scripts/security-contract.test.js"
+    "test:security-contract": "node scripts/security-contract.test.js",
+    "test:fixes": "node scripts/time-utils.test.js && node scripts/wallet-guard.test.js && node scripts/security-ops.test.js && node scripts/security-contract.test.js"
   }
 }
