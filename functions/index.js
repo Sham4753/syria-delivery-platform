@@ -6,6 +6,7 @@ const functionsV1 = require('firebase-functions/v1');
 const {HttpsError} = require('firebase-functions/v1/https');
 const FUNCTION_REGION = 'europe-west1';
 const onCall = (handler) => functionsV1.region(FUNCTION_REGION).https.onCall(handler);
+const onRequest = (handler) => functionsV1.region(FUNCTION_REGION).https.onRequest(handler);
 const {onSchedule} = require('firebase-functions/v2/scheduler');
 const onScheduled = (schedule, handler) => onSchedule({region: FUNCTION_REGION, schedule, timeZone: 'Asia/Damascus'}, handler);
 const {initializeApp} = require('firebase-admin/app');
@@ -18,6 +19,7 @@ const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
 const {bankTransferLedgerEntries, assertPaymentTransition} = require('./financial-ledger');
+const {normalizeProviderConfig, verifySignature, providerEvent, providerStatusForEvent, providerLedgerEntries} = require('./payment-provider');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
 const {OFFER_TTL_MS, rankCouriers, pointOf} = require('./dispatch-engine');
 
@@ -349,6 +351,28 @@ exports.publishPaymentSettings = onCall(async (data, context) => {
   return {status: 'published', ...result};
 });
 
+exports.publishPaymentProviderSettings = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const caller = (await db.doc(`users/${context.auth.uid}`).get()).data();
+  if (caller?.role !== 'super_admin') throw new HttpsError('permission-denied', 'هذه العملية متاحة للأدمن فقط');
+  let settings;
+  try {
+    settings = normalizeProviderConfig(data?.settings || {});
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
+  if (settings.enabled && settings.provider_id === 'none') throw new HttpsError('invalid-argument', 'لا يمكن تفعيل مزود none');
+  const ref = db.doc('payment_provider_config/main'); const revisionRef = db.collection('payment_provider_config_revisions').doc(); const auditRef = db.collection('audit_logs').doc();
+  const result = await db.runTransaction(async (tx) => {
+    const before = (await tx.get(ref)).data() || {}; const version = Number(before.config_version || 0) + 1;
+    tx.set(ref, {...settings, config_version: version, updated_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()});
+    tx.create(revisionRef, {version, actor_id: context.auth.uid, before, patch: settings, created_at: FieldValue.serverTimestamp()});
+    tx.create(auditRef, {actor_id: context.auth.uid, action: 'publish_payment_provider_settings', target: 'payment_provider_config/main', details: {provider_id: settings.provider_id, environment: settings.environment, enabled: settings.enabled}, created_at: FieldValue.serverTimestamp()});
+    return {version};
+  });
+  return {status: 'published', ...result, provider_id: settings.provider_id, enabled: settings.enabled};
+});
+
 function isVendorOpen(vendor, now = new Date()) {
   const hours = vendor?.opening_hours;
   if (!hours || typeof hours !== 'object') return true;
@@ -507,7 +531,7 @@ exports.createBankTransferIntent = onCall(async (data, context) => {
     }
     const amount = money(Number(order.total || 0));
     if (amount <= 0) throw new HttpsError('failed-precondition', 'مبلغ الطلب غير صالح');
-    tx.create(paymentRef, {order_id: orderId, customer_id: context.auth.uid, method: 'bank_transfer', amount, currency: String(configSnap.data()?.bank_transfer?.currency || 'SYP'), status: 'awaiting_customer_action', created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: 1});
+    tx.create(paymentRef, {order_id: orderId, customer_id: context.auth.uid, method: 'bank_transfer', provider_id: 'manual_bank_transfer', provider_reference: paymentRef.id, amount, currency: String(configSnap.data()?.bank_transfer?.currency || 'SYP'), status: 'awaiting_customer_action', created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: 1});
     tx.update(orderRef, {payment_status: 'pending', payment_intent_id: paymentRef.id, updated_at: FieldValue.serverTimestamp()});
     result = {payment_id: paymentRef.id, status: 'awaiting_customer_action', reused: false};
   });
@@ -574,6 +598,89 @@ exports.reviewBankTransfer = onCall(async (data, context) => {
     }
   });
   return {payment_id: paymentId, status: decision === 'approve' ? 'paid' : 'rejected'};
+});
+
+async function applyProviderEvent(event, paymentRef, eventRef) {
+  const paymentSnap = await paymentRef.get();
+  if (!paymentSnap.exists) throw new Error('payment_not_found');
+  const payment = paymentSnap.data() || {};
+  if (Number(payment.amount) !== Number(event.amount) || String(payment.currency || '').toUpperCase() !== event.currency) throw new Error('payment_amount_currency_mismatch');
+  const nextStatus = providerStatusForEvent(event.type);
+  const orderRef = db.doc(`orders/${payment.order_id}`);
+  const result = await db.runTransaction(async (tx) => {
+    const [eventSnap, currentPaymentSnap, orderSnap] = await Promise.all([tx.get(eventRef), tx.get(paymentRef), tx.get(orderRef)]);
+    if (eventSnap.exists) return {duplicate: true, status: currentPaymentSnap.data()?.status};
+    if (!currentPaymentSnap.exists || !orderSnap.exists) throw new Error('payment_or_order_not_found');
+    const current = currentPaymentSnap.data() || {};
+    let transitioned = false;
+    if (current.status !== nextStatus) {
+      try {
+        assertPaymentTransition(current.status, nextStatus);
+      } catch (error) {
+        if (!(current.status === 'paid' && nextStatus === 'refunded')) throw error;
+      }
+      tx.update(paymentRef, {status: nextStatus, provider_event_id: event.id, provider_updated_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
+      transitioned = true;
+      if (nextStatus === 'paid') tx.update(orderRef, {payment_status: 'paid', paid_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+      if (nextStatus === 'failed') tx.update(orderRef, {payment_status: 'failed', payment_failure_reason: 'provider_failed', updated_at: FieldValue.serverTimestamp()});
+      if (nextStatus === 'refunded') tx.update(orderRef, {payment_status: 'refunded', refunded_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+      if (nextStatus === 'paid' || nextStatus === 'refunded') {
+        const entries = providerLedgerEntries({paymentId: paymentRef.id, orderId: payment.order_id, amount: payment.amount, currency: payment.currency, status: nextStatus, providerReference: event.providerReference});
+        for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, created_at: FieldValue.serverTimestamp()});
+      }
+    }
+    tx.create(eventRef, {event_id: event.id, type: event.type, payment_id: paymentRef.id, provider_reference: event.providerReference, amount: event.amount, currency: event.currency, applied: transitioned, received_at: FieldValue.serverTimestamp()});
+    return {duplicate: false, status: nextStatus, applied: transitioned};
+  });
+  return result;
+}
+
+exports.paymentWebhook = onRequest(async (req, res) => {
+  if (req.method !== 'POST') return res.status(405).json({error: 'method_not_allowed'});
+  const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  const signature = req.get('x-provider-signature') || req.get('x-webhook-signature');
+  if (!verifySignature(rawBody, signature, process.env.PAYMENT_WEBHOOK_SECRET)) return res.status(401).json({error: 'invalid_signature'});
+  let event;
+  try {
+    event = providerEvent(JSON.parse(rawBody.toString('utf8')));
+  } catch (error) {
+    return res.status(400).json({error: error.message});
+  }
+  const providerConfig = (await db.doc('payment_provider_config/main').get()).data() || {};
+  if (providerConfig.enabled !== true) return res.status(409).json({error: 'provider_disabled'});
+  const paymentQuery = await db.collection('payment_intents').where('provider_reference', '==', event.providerReference).limit(1).get();
+  if (paymentQuery.empty) return res.status(404).json({error: 'payment_not_found'});
+  const matchedPayment = paymentQuery.docs[0].data() || {};
+  if (matchedPayment.provider_id !== providerConfig.provider_id) return res.status(409).json({error: 'provider_mismatch'});
+  try {
+    const result = await applyProviderEvent(event, paymentQuery.docs[0].ref, db.doc(`payment_webhook_events/${event.id}`));
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('Payment webhook failed', {event_id: event.id, error: error.message});
+    return res.status(error.message === 'payment_amount_currency_mismatch' ? 422 : 409).json({error: error.message});
+  }
+});
+
+exports.requestPaymentRefund = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const caller = (await db.doc(`users/${context.auth.uid}`).get()).data();
+  if (!['super_admin', 'vendor_admin'].includes(caller?.role)) throw new HttpsError('permission-denied', 'ليست لديك صلاحية طلب الرد');
+  const paymentId = String(data?.payment_id || '').trim(); const reason = String(data?.reason || '').trim().slice(0, 200);
+  if (!paymentId || !reason) throw new HttpsError('invalid-argument', 'عملية الدفع وسبب الرد مطلوبان');
+  const paymentRef = db.doc(`payment_intents/${paymentId}`); const refundRef = db.doc(`refund_requests/${paymentId}`);
+  const preflightPayment = await paymentRef.get();
+  const preflightOrder = preflightPayment.exists ? await db.doc(`orders/${preflightPayment.data()?.order_id}`).get() : null;
+  if (caller?.role === 'vendor_admin' && (!preflightOrder?.exists || caller.vendor_id !== preflightOrder.data()?.vendor_id)) throw new HttpsError('permission-denied', 'الطلب لا يتبع متجرك');
+  await db.runTransaction(async (tx) => {
+    const [paymentSnap, refundSnap] = await Promise.all([tx.get(paymentRef), tx.get(refundRef)]);
+    if (!paymentSnap.exists) throw new HttpsError('not-found', 'عملية الدفع غير موجودة');
+    const payment = paymentSnap.data() || {};
+    if (payment.status !== 'paid') throw new HttpsError('failed-precondition', 'لا يمكن رد عملية غير مدفوعة');
+    if (refundSnap.exists) return;
+    tx.update(paymentRef, {status: 'refund_pending', refund_reason: reason, refund_requested_by: context.auth.uid, refund_requested_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
+    tx.create(refundRef, {payment_id: paymentId, order_id: payment.order_id, amount: payment.amount, currency: payment.currency, status: 'requested', reason, requested_by: context.auth.uid, created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+  });
+  return {payment_id: paymentId, status: 'refund_pending'};
 });
 
 exports.transitionOrderStatus = onCall(async (data, context) => {

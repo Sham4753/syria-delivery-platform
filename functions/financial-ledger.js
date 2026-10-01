@@ -1,5 +1,5 @@
 const LEDGER_DIRECTIONS = new Set(['debit', 'credit']);
-const PAYMENT_STATUSES = new Set(['created', 'awaiting_customer_action', 'pending_verification', 'paid', 'failed', 'rejected']);
+const PAYMENT_STATUSES = new Set(['created', 'awaiting_customer_action', 'pending_verification', 'pending_provider', 'authorized', 'paid', 'refund_pending', 'refunded', 'failed', 'rejected']);
 
 function money(value) {
   const amount = Math.round(Number(value || 0) * 100) / 100;
@@ -45,10 +45,14 @@ function buildBalancedPair({entryGroupId, amount, currency, sourceType, sourceId
 function assertPaymentTransition(from, to) {
   if (!PAYMENT_STATUSES.has(to)) throw new Error('Invalid payment status');
   const transitions = {
-    created: ['awaiting_customer_action', 'pending_verification', 'failed'],
+    created: ['awaiting_customer_action', 'pending_verification', 'pending_provider', 'failed'],
     awaiting_customer_action: ['pending_verification', 'failed'],
     pending_verification: ['paid', 'rejected', 'failed'],
-    paid: [],
+    pending_provider: ['authorized', 'paid', 'failed'],
+    authorized: ['paid', 'failed'],
+    paid: ['refund_pending'],
+    refund_pending: ['refunded', 'failed'],
+    refunded: [],
     rejected: [],
     failed: [],
   };

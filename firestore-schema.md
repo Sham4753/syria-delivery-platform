@@ -90,10 +90,22 @@
 `customer_id`, `order_id?`, `subject`, `message`, `status` (`open|in_progress|closed`), `created_at`, `updated_at`.
 
 ### `payment_intents/{paymentId}`
-عملية دفع مستقلة عن الطلب. تحتوي `order_id`, `customer_id`, `method` (`bank_transfer`), `amount`, `currency`, `status` (`created|awaiting_customer_action|pending_verification|paid|rejected|failed`), `reference?`, `sender_name?`, `note?`, `submitted_at?`, `reviewed_by?`, `reviewed_at?`, `review_reason?`, `version`, `created_at`, `updated_at`. لا يكتب العميل أو الأدمن مباشرة؛ التعديل عبر الدوال.
+عملية دفع مستقلة عن الطلب. تحتوي `order_id`, `customer_id`, `method` (`bank_transfer|provider`), `amount`, `currency`, `status` (`created|awaiting_customer_action|pending_verification|pending_provider|authorized|paid|refund_pending|refunded|rejected|failed`), `provider_reference?`, `provider_event_id?`, `reference?`, `sender_name?`, `note?`, `submitted_at?`, `reviewed_by?`, `reviewed_at?`, `review_reason?`, `version`, `created_at`, `updated_at`. لا يكتب العميل أو الأدمن مباشرة؛ التعديل عبر الدوال.
 
 ### `payment_events/{eventId}`
 سجل غير قابل للتعديل لأحداث العملية (`proof_submitted`, `approved`, `rejected`) مع `payment_id`, `actor_id`, `reference?`, `reason?`, و`created_at`. تستخدم معرفات حتمية للأحداث الحساسة لمنع التكرار.
+
+### `payment_provider_config/main` و`payment_provider_config_revisions/{version}`
+
+إعداد خاص للمزود القابل للتبديل: `provider_id`, `environment` (`sandbox|production`), `enabled`, `currency`, `webhook_secret_ref` (`env:PAYMENT_WEBHOOK_SECRET`)، `config_version`, وبيانات المراجعة. لا تحفظ Secret أو API key في Firestore.
+
+### `payment_webhook_events/{eventId}`
+
+سجل Idempotency غير قابل للتعديل للأحداث الموقعة: `event_id`, `type`, `payment_id`, `provider_reference`, `amount`, `currency`, `applied`, `received_at`. تكرار نفس معرف الحدث لا يكتب قيودًا ثانية.
+
+### `refund_requests/{paymentId}`
+
+طلب رد مالي: `payment_id`, `order_id`, `amount`, `currency`, `status` (`requested|processing|refunded|failed`), `reason`, `requested_by`, `created_at`, `updated_at`. ينتقل الدفع إلى `refund_pending` حتى يصل حدث `payment.refunded` من المزود.
 
 ### `payments/{paymentId}`
 سجل قديم للتوافق فقط. العمليات الجديدة تستخدم `payment_intents` ولا تغيّر `payment_status` مباشرة من التطبيقات.

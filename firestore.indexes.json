@@ -203,6 +203,13 @@
         {"fieldPath": "order_id", "order": "ASCENDING"},
         {"fieldPath": "status", "order": "ASCENDING"}
       ]
+    },
+    {
+      "collectionGroup": "payment_intents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "provider_reference", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []
