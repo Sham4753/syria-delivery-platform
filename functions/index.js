@@ -5,7 +5,16 @@ const onDocumentWritten = (path, handler) => firestoreOnWritten({...triggerOptio
 const functionsV1 = require('firebase-functions/v1');
 const {HttpsError} = require('firebase-functions/v1/https');
 const FUNCTION_REGION = 'europe-west1';
-const onCall = (handler) => functionsV1.region(FUNCTION_REGION).https.onCall(handler);
+const {assertAppCheck, consumeQuota, incidentRecord} = require('./security-ops');
+const onCall = (handler) => functionsV1.region(FUNCTION_REGION).https.onCall(async (data, context) => {
+  assertAppCheck(context, HttpsError);
+  try {
+    return await handler(data, context);
+  } catch (error) {
+    if (!(error instanceof HttpsError)) console.error('Callable operation failed', {error: error.message, uid: context.auth?.uid || null});
+    throw error;
+  }
+});
 const onRequest = (handler) => functionsV1.region(FUNCTION_REGION).https.onRequest(handler);
 const {onSchedule} = require('firebase-functions/v2/scheduler');
 const onScheduled = (schedule, handler) => onSchedule({region: FUNCTION_REGION, schedule, timeZone: 'Asia/Damascus'}, handler);
@@ -681,6 +690,49 @@ exports.requestPaymentRefund = onCall(async (data, context) => {
     tx.create(refundRef, {payment_id: paymentId, order_id: payment.order_id, amount: payment.amount, currency: payment.currency, status: 'requested', reason, requested_by: context.auth.uid, created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
   });
   return {payment_id: paymentId, status: 'refund_pending'};
+});
+
+exports.createSupportTicket = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const caller = (await db.doc(`users/${context.auth.uid}`).get()).data() || {};
+  if (caller.role !== 'customer') throw new HttpsError('permission-denied', 'إنشاء الشكوى متاح للعميل فقط');
+  await consumeQuota({db, uid: context.auth.uid, action: 'support_ticket', limit: 5, windowMs: 10 * 60 * 1000, HttpsError});
+  const subject = String(data?.subject || '').trim().slice(0, 120);
+  const message = String(data?.message || '').trim().slice(0, 2000);
+  const orderId = String(data?.order_id || '').trim().slice(0, 128);
+  if (!subject || !message) throw new HttpsError('invalid-argument', 'عنوان الشكوى ورسالتها مطلوبان');
+  if (orderId) {
+    const order = await db.doc(`orders/${orderId}`).get();
+    if (!order.exists || order.data()?.customer_id !== context.auth.uid) throw new HttpsError('permission-denied', 'لا يمكن ربط الشكوى بهذا الطلب');
+  }
+  const ticketRef = db.collection('support_tickets').doc();
+  await ticketRef.set({customer_id: context.auth.uid, order_id: orderId || null, subject, message, status: 'open', priority: 'normal', category: String(data?.category || 'general').trim().slice(0, 40), created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+  return {ticket_id: ticketRef.id, status: 'open'};
+});
+
+exports.reviewSupportTicket = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const caller = (await db.doc(`users/${context.auth.uid}`).get()).data() || {};
+  if (caller.role !== 'super_admin') throw new HttpsError('permission-denied', 'هذه العملية متاحة للأدمن فقط');
+  const ticketId = String(data?.ticket_id || '').trim();
+  const status = String(data?.status || '').trim();
+  const priority = String(data?.priority || '').trim();
+  const note = String(data?.note || '').trim().slice(0, 1000);
+  if (!ticketId || !['open', 'in_progress', 'resolved', 'closed'].includes(status) || !['low', 'normal', 'high', 'urgent'].includes(priority)) throw new HttpsError('invalid-argument', 'حالة وأولوية التذكرة غير صالحتين');
+  const ref = db.doc(`support_tickets/${ticketId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'التذكرة غير موجودة');
+  await ref.update({status, priority, admin_note: note, reviewed_by: context.auth.uid, reviewed_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+  return {ticket_id: ticketId, status, priority};
+});
+
+exports.recordOperationalIncident = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const caller = (await db.doc(`users/${context.auth.uid}`).get()).data() || {};
+  if (caller.role !== 'super_admin') throw new HttpsError('permission-denied', 'هذه العملية متاحة للأدمن فقط');
+  const record = incidentRecord({source: data?.source, code: data?.code, message: data?.message, context: {actor_id: context.auth.uid, severity: data?.severity || 'error'}});
+  await db.collection('operational_incidents').add({...record, actor_id: context.auth.uid, acknowledged: false, created_at: FieldValue.serverTimestamp()});
+  return {recorded: true};
 });
 
 exports.transitionOrderStatus = onCall(async (data, context) => {

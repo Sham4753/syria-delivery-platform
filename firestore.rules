@@ -74,13 +74,11 @@ service cloud.firestore {
       allow delete: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
     }
     match /support_tickets/{ticketId} {
-      allow create: if signedIn() && request.resource.data.customer_id == request.auth.uid
-        && request.resource.data.status == 'open'
-        && request.resource.data.keys().hasOnly(['customer_id', 'order_id', 'subject', 'message', 'status', 'created_at', 'updated_at']);
+      allow create, update, delete: if false;
       allow read: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
-      allow update: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['subject', 'message', 'updated_at']));
     }
+    match /security_rate_limits/{rateId} { allow read, write: if false; }
+    match /operational_incidents/{incidentId} { allow read: if admin(); allow write: if false; }
     match /payments/{paymentId} {
       allow read: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
       allow create, update, delete: if admin();

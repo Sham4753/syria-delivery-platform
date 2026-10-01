@@ -79,4 +79,9 @@ assert(/secret\|password\|token\|api/.test(functions) && /account_number\$/.test
 const publicConfigBlock = functions.slice(functions.indexOf('const PUBLIC_CONFIG_KEYS'), functions.indexOf('function buildPublicSystemConfig'));
 assert(!/commission_by_zone|courier_min_withdrawal|merchant_min_withdrawal/.test(publicConfigBlock), 'internal commissions and withdrawal thresholds must not be public');
 assert(/match \/payment_config\/{configId} \{ allow read: if admin\(\); allow write: if false; \}/.test(rules) && /match \/public_payment_config\/{configId} \{ allow read: if configId == 'main'; allow write: if false; \}/.test(rules), 'payment config rules must separate private and public documents');
+const securityOps = fs.readFileSync(path.join(root, 'functions', 'security-ops.js'), 'utf8');
+assert(/ENFORCE_APPCHECK/.test(securityOps) && /assertAppCheck/.test(functions), 'callables must have an environment-controlled App Check gate');
+assert(/consumeQuota/.test(functions) && /security_rate_limits/.test(rules), 'support operations must use server-side quotas');
+assert(/exports\.createSupportTicket/.test(functions) && /exports\.reviewSupportTicket/.test(functions) && /allow create, update, delete: if false/.test(rules), 'support tickets must be callable-only');
+assert(/exports\.recordOperationalIncident/.test(functions) && /operational_incidents/.test(rules), 'operational incidents must be admin-readable and server-written');
 console.log('Security contract tests passed.');

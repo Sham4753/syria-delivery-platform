@@ -87,7 +87,13 @@
 `order_id`, `customer_id`, `vendor_id`, `courier_id?`, `vendor_rating`, `courier_rating?`, `comment?`, `created_at`.
 
 ### `support_tickets/{ticketId}`
-`customer_id`, `order_id?`, `subject`, `message`, `status` (`open|in_progress|closed`), `created_at`, `updated_at`.
+`customer_id`, `order_id?`, `subject`, `message`, `category`, `status` (`open|in_progress|resolved|closed`), `priority` (`low|normal|high|urgent`), `admin_note?`, `reviewed_by?`, `reviewed_at?`, `created_at`, `updated_at`. الإنشاء والمراجعة عبر `createSupportTicket` و`reviewSupportTicket` فقط، والعميل يقرأ تذاكره بينما الأدمن يقرأ الجميع.
+
+### `security_rate_limits/{uid_action}`
+عداد خادمي داخلي للحصص الزمنية: `uid`, `action`, `count`, `limit`, `window_start`, `updated_at`. لا يقرأه أو يكتبه العميل؛ تحفظ العملية داخل Transaction لمنع تجاوز الحصة بالطلبات المتزامنة.
+
+### `operational_incidents/{incidentId}`
+سجل تشغيل وأمان مختصر: `source`, `code`, `message`, `context`, `actor_id`, `severity?`, `acknowledged`, `created_at`. لا يحتوي أسرارًا أو tokens أو بيانات دفع كاملة، ولا يقبل الكتابة المباشرة من العميل.
 
 ### `payment_intents/{paymentId}`
 عملية دفع مستقلة عن الطلب. تحتوي `order_id`, `customer_id`, `method` (`bank_transfer|provider`), `amount`, `currency`, `status` (`created|awaiting_customer_action|pending_verification|pending_provider|authorized|paid|refund_pending|refunded|rejected|failed`), `provider_reference?`, `provider_event_id?`, `reference?`, `sender_name?`, `note?`, `submitted_at?`, `reviewed_by?`, `reviewed_at?`, `review_reason?`, `version`, `created_at`, `updated_at`. لا يكتب العميل أو الأدمن مباشرة؛ التعديل عبر الدوال.
