@@ -23,6 +23,12 @@
 ### `system_config_revisions/{version}`
 `version`, `actor_id`, `reason`, `before`, `patch`, `after`, `created_at`. سجل غير قابل للكتابة من العميل، ويُستخدم للتدقيق والاسترجاع المنضبط.
 
+### `payment_config/main` و`payment_config_revisions/{version}`
+إعدادات الدفع الداخلية وسجل إصداراتها. تحفظ فقط عبر `publishPaymentSettings` وتقرأ من الأدمن. تحتوي المرحلة الأولى على إعداد عرض التحويل البنكي، وحالة المراجعة اليدوية، واسم البنك واسم صاحب الحساب ورقم حساب مقنع فقط. لا تحفظ مفاتيح API أو كلمات المرور أو IBAN أو رقم حساب كامل.
+
+### `public_payment_config/main`
+إسقاط عام محدود لإعدادات طرق الدفع التي يمكن عرضها للعميل. لا يكتب إليه أي عميل؛ تنشئه الدالة الخادمية من بيانات الدفع المسموح بها. لا يمثل هذا السجل عملية دفع أو إثبات تسوية.
+
 ### `orders/{orderId}` و`orders/{orderId}/events/{eventId}`
 الحالات المعتمدة هي: `pending → preparing → ready_for_pickup → picked_up → on_the_way → delivered`، ويمكن الإلغاء من `pending` أو `preparing` فقط. لا يغيّر التاجر أو المندوب الحالة مباشرة من Firestore؛ يستخدمان `transitionOrderStatus`، وتُحفظ كل نقلة مع `from_status`, `to_status`, `actor_id`, `actor_role`, `reason`, و`created_at`. قبول المندوب يتم ذريًا عبر `claimCourierOrder`، والتعيين اليدوي عبر `overrideDispatch`.
 

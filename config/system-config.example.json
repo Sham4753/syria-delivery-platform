@@ -5,5 +5,17 @@
   "support_phone": "",
   "environment": "production",
   "default_delivery_fee": 10000,
-  "default_opening_hours": { "open": "09:00", "close": "23:00" }
+  "default_opening_hours": { "open": "09:00", "close": "23:00" },
+  "payment_settings": {
+    "bank_transfer": {
+      "enabled": false,
+      "requires_manual_review": true,
+      "display_name_ar": "تحويل بنكي",
+      "bank_name": "",
+      "account_holder": "",
+      "account_number_masked": "",
+      "currency": "SYP",
+      "instructions_ar": ""
+    }
+  }
 }

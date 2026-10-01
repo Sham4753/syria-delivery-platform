@@ -178,8 +178,91 @@ const CONFIG_LIMITS = {
   app_name: {type: 'string', max: 80}, currency: {type: 'string', max: 8}, support_phone: {type: 'string', max: 32},
   default_delivery_fee: {type: 'number', min: 0, max: 1000000000}, emergency_mode: {type: 'boolean'}, emergency_message: {type: 'string', max: 500},
   surge_enabled: {type: 'boolean'}, surge_multiplier: {type: 'number', min: 0.1, max: 10}, loyalty_point_value: {type: 'number', min: 0, max: 1000000},
-  errand_fee_per_km: {type: 'number', min: 0, max: 1000000000}, errand_min_fee: {type: 'number', min: 0, max: 1000000000}, max_change_amount: {type: 'number', min: 0, max: 1000000000},
+  loyalty_points_rate: {type: 'number', min: 0, max: 1000000}, errand_fee_per_km: {type: 'number', min: 0, max: 1000000000},
+  errand_min_fee: {type: 'number', min: 0, max: 1000000000}, max_change_amount: {type: 'number', min: 0, max: 1000000000},
+  pricing_tiers: {type: 'pricing_tiers'}, commission_by_zone: {type: 'commission_by_zone'}, banners: {type: 'banners'},
+  categories: {type: 'categories'}, home_sections: {type: 'string_array', max: 20}, featured_vendor_ids: {type: 'id_array', max: 500},
+  free_delivery_vendor_ids: {type: 'id_array', max: 500}, batching_enabled: {type: 'boolean'}, max_batch_orders: {type: 'number', min: 2, max: 3},
+  courier_min_withdrawal: {type: 'number', min: 0, max: 1000000000}, merchant_min_withdrawal: {type: 'number', min: 0, max: 1000000000},
+  low_bandwidth_mode: {type: 'boolean'}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
+  primary_color: {type: 'color'}, secondary_color: {type: 'color'}, app_logo_url: {type: 'url', max: 2048},
+  enable_google_auth: {type: 'boolean'}, enable_facebook_auth: {type: 'boolean'}, enable_whatsapp_otp: {type: 'boolean'}, enable_guest_shopping: {type: 'boolean'},
 };
+
+const PUBLIC_CONFIG_KEYS = new Set([
+  'app_name', 'currency', 'support_phone', 'default_delivery_fee', 'emergency_mode', 'emergency_message',
+  'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_point_value', 'errand_fee_per_km',
+  'errand_min_fee', 'max_change_amount', 'pricing_tiers', 'banners', 'categories', 'home_sections',
+  'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode',
+  'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
+  'enable_whatsapp_otp', 'enable_guest_shopping', 'app_logo_url',
+]);
+
+function buildPublicSystemConfig(config) {
+  return Object.fromEntries(Object.entries(config || {}).filter(([key]) => PUBLIC_CONFIG_KEYS.has(key)));
+}
+
+function assertPlainObject(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `${label} غير صالح`);
+  return value;
+}
+
+function validateBoundedString(value, max, label) {
+  if (typeof value !== 'string' || value.length > max) throw new HttpsError('invalid-argument', `${label} غير صالح`);
+  return value.trim();
+}
+
+function validateConfigValue(key, value, rule) {
+  if (rule.type === 'string') return validateBoundedString(value, rule.max, key);
+  if (rule.type === 'url') return validateBoundedString(value, rule.max, key);
+  if (rule.type === 'color') {
+    const color = validateBoundedString(value, 16, key);
+    if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new HttpsError('invalid-argument', `قيمة ${key} اللونية غير صالحة`);
+    return color;
+  }
+  if (rule.type === 'boolean') {
+    if (typeof value !== 'boolean') throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
+    return value;
+  }
+  if (rule.type === 'number') {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < rule.min || number > rule.max) throw new HttpsError('invalid-argument', `قيمة ${key} خارج الحدود`);
+    return number;
+  }
+  if (!Array.isArray(value) || value.length > rule.max) throw new HttpsError('invalid-argument', `قائمة ${key} غير صالحة`);
+  if (rule.type === 'string_array' || rule.type === 'id_array') return value.map((item) => validateBoundedString(item, 120, key));
+  if (rule.type === 'pricing_tiers') {
+    return value.map((tier) => {
+      assertPlainObject(tier, 'شريحة التسعير');
+      const fromKm = Number(tier.from_km); const toKm = Number(tier.to_km); const fee = Number(tier.fee);
+      if (![fromKm, toKm, fee].every(Number.isFinite) || fromKm < 0 || toKm <= fromKm || fee < 0 || fee > 1000000000) throw new HttpsError('invalid-argument', 'شريحة التسعير غير صالحة');
+      return {from_km: fromKm, to_km: toKm, fee};
+    });
+  }
+  if (rule.type === 'commission_by_zone') {
+    const clean = {};
+    for (const [zoneId, rates] of Object.entries(assertPlainObject(value, key)).slice(0, 500)) {
+      const item = assertPlainObject(rates, 'عمولة المنطقة');
+      const vendorRate = Number(item.vendor); const courierRate = Number(item.courier);
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(zoneId) || ![vendorRate, courierRate].every(Number.isFinite) || vendorRate < 0 || vendorRate > 100 || courierRate < 0 || courierRate > 100) throw new HttpsError('invalid-argument', 'عمولة المنطقة غير صالحة');
+      clean[zoneId] = {vendor: vendorRate, courier: courierRate};
+    }
+    return clean;
+  }
+  if (rule.type === 'categories') {
+    return value.map((item) => {
+      const category = assertPlainObject(item, 'التصنيف');
+      return {id: validateBoundedString(category.id, 80, 'معرّف التصنيف'), name: validateBoundedString(category.name, 120, 'اسم التصنيف'), icon: validateBoundedString(category.icon || 'category', 80, 'أيقونة التصنيف')};
+    });
+  }
+  if (rule.type === 'banners') {
+    return value.map((item) => {
+      const banner = assertPlainObject(item, 'البنر');
+      return {title: validateBoundedString(banner.title || '', 160, 'عنوان البنر'), image_url: validateBoundedString(banner.image_url || '', 2048, 'رابط البنر'), action: validateBoundedString(banner.action || '', 160, 'إجراء البنر'), is_active: banner.is_active !== false};
+    });
+  }
+  throw new HttpsError('invalid-argument', `نوع الإعداد ${key} غير مدعوم`);
+}
 
 function validateConfigPatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpsError('invalid-argument', 'إعدادات التخصيص غير صالحة');
@@ -187,17 +270,7 @@ function validateConfigPatch(patch) {
   for (const [key, value] of Object.entries(patch)) {
     const rule = CONFIG_LIMITS[key];
     if (!rule) throw new HttpsError('invalid-argument', `الإعداد غير مسموح: ${key}`);
-    if (rule.type === 'string') {
-      if (typeof value !== 'string' || value.length > rule.max) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
-      clean[key] = value.trim();
-    } else if (rule.type === 'boolean') {
-      if (typeof value !== 'boolean') throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
-      clean[key] = value;
-    } else {
-      const number = Number(value);
-      if (!Number.isFinite(number) || number < rule.min || number > rule.max) throw new HttpsError('invalid-argument', `قيمة ${key} خارج الحدود`);
-      clean[key] = number;
-    }
+    clean[key] = validateConfigValue(key, value, rule);
   }
   if (clean.emergency_mode === true && clean.emergency_message !== undefined && !clean.emergency_message) throw new HttpsError('invalid-argument', 'رسالة الطوارئ مطلوبة عند تفعيل الوضع');
   return clean;
@@ -215,11 +288,57 @@ exports.publishSystemConfig = onCall(async (data, context) => {
     const before = currentSnap.data() || {};
     const version = Number(before.config_version || 0) + 1;
     const after = {...before, ...patch, config_version: version, updated_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()};
-    const publicConfig = Object.fromEntries(Object.entries(after).filter(([key]) => !['updated_by'].includes(key)));
     const revisionRef = db.doc(`system_config_revisions/${String(version).padStart(12, '0')}`);
     tx.set(mainRef, after, {merge: true});
-    tx.set(db.doc('public_config/main'), publicConfig, {merge: true});
+    tx.set(db.doc('public_config/main'), buildPublicSystemConfig(after));
     tx.create(revisionRef, {version, actor_id: context.auth.uid, reason, before, patch, after, created_at: FieldValue.serverTimestamp()});
+    return {version};
+  });
+  return {status: 'published', ...result};
+});
+
+function validatePaymentSettings(settings) {
+  const input = assertPlainObject(settings, 'إعدادات الدفع');
+  const rejectSecrets = (value) => {
+    for (const [key, nested] of Object.entries(value || {})) {
+      if (/(secret|password|token|api[_-]?key|private[_-]?key|iban|account_number$)/i.test(key)) throw new HttpsError('invalid-argument', 'لا يمكن حفظ أسرار أو رقم حساب كامل من هذه الشاشة');
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) rejectSecrets(nested);
+    }
+  };
+  rejectSecrets(input);
+  const bank = assertPlainObject(input.bank_transfer || {}, 'إعداد التحويل البنكي');
+  if (typeof bank.enabled !== 'boolean' || typeof bank.requires_manual_review !== 'boolean') throw new HttpsError('invalid-argument', 'حالة التحويل البنكي غير صالحة');
+  const maskedAccount = validateBoundedString(bank.account_number_masked || '', 32, 'رقم الحساب المقنع');
+  if (maskedAccount && !/^[*•·\s-]*\d{1,4}$/.test(maskedAccount)) throw new HttpsError('invalid-argument', 'يجب إدخال آخر أربعة أرقام فقط بصيغة مقنعة');
+  return {bank_transfer: {
+    enabled: bank.enabled,
+    requires_manual_review: bank.requires_manual_review,
+    display_name_ar: validateBoundedString(bank.display_name_ar || 'تحويل بنكي', 100, 'اسم طريقة الدفع'),
+    bank_name: validateBoundedString(bank.bank_name || '', 160, 'اسم البنك'),
+    account_holder: validateBoundedString(bank.account_holder || '', 160, 'اسم صاحب الحساب'),
+    account_number_masked: maskedAccount,
+    currency: validateBoundedString(bank.currency || 'SYP', 8, 'عملة الحساب'),
+    instructions_ar: validateBoundedString(bank.instructions_ar || '', 1000, 'تعليمات التحويل'),
+  }};
+}
+
+exports.publishPaymentSettings = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const caller = (await db.doc(`users/${context.auth.uid}`).get()).data();
+  if (caller?.role !== 'super_admin') throw new HttpsError('permission-denied', 'هذه العملية متاحة للأدمن فقط');
+  const settings = validatePaymentSettings(data?.settings);
+  const reason = String(data?.reason || 'payment_settings').trim().slice(0, 120);
+  const privateRef = db.doc('payment_config/main');
+  const publicRef = db.doc('public_payment_config/main');
+  const auditRef = db.collection('audit_logs').doc();
+  const result = await db.runTransaction(async (tx) => {
+    const before = (await tx.get(privateRef)).data() || {};
+    const version = Number(before.config_version || 0) + 1;
+    const after = {...settings, config_version: version, updated_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()};
+    tx.set(privateRef, after);
+    tx.set(publicRef, settings);
+    tx.create(db.doc(`payment_config_revisions/${String(version).padStart(12, '0')}`), {version, actor_id: context.auth.uid, reason, before, patch: settings, created_at: FieldValue.serverTimestamp()});
+    tx.create(auditRef, {actor_id: context.auth.uid, action: 'publish_payment_settings', target: 'payment_config/main', details: {version, bank_transfer_enabled: settings.bank_transfer.enabled}, created_at: FieldValue.serverTimestamp()});
     return {version};
   });
   return {status: 'published', ...result};
@@ -723,8 +842,7 @@ exports.syncPublicSystemConfig = onDocumentWritten('system_config/{configId}', a
   if (event.params.configId !== 'main') return;
   const after = event.data?.after;
   if (!after?.exists) return db.doc('public_config/main').delete();
-  const safe = Object.fromEntries(Object.entries(after.data() || {}).filter(([key]) => key !== 'updated_by'));
-  return db.doc('public_config/main').set(safe, {merge: true});
+  return db.doc('public_config/main').set(buildPublicSystemConfig(after.data()), {merge: false});
 });
 
 exports.auditVendorChanges = onDocumentWritten('vendors/{vendorId}', async (event) => writeAudit(`vendors/${event.params.vendorId}`, event.data?.before?.data(), event.data?.after?.data()));

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore'
-import { auth, db, functions } from '../firebase'
+import { collection, doc, getDoc, onSnapshot } from 'firebase/firestore'
+import { db, functions } from '../firebase'
 import { httpsCallable } from 'firebase/functions'
 import { Button, EmptyState, Field, Toast, useToast } from './ui'
 import { uploadOptimizedImage } from '../assetUtils'
@@ -17,10 +17,14 @@ const defaults = {
   app_logo_url: '',
 }
 
-const audit = (action, target, details = {}) => setDoc(doc(collection(db, 'audit_logs')), {
-  actor_id: auth.currentUser?.uid || null, actor_email: auth.currentUser?.email || null,
-  action, target, details, created_at: serverTimestamp(),
-})
+const paymentDefaults = {
+  bank_transfer: {
+    enabled: false, requires_manual_review: true, display_name_ar: 'تحويل بنكي', bank_name: '',
+    account_holder: '', account_number_masked: '', currency: 'SYP', instructions_ar: '',
+  },
+}
+
+const pickConfig = data => Object.fromEntries(Object.keys(defaults).map(key => [key, data?.[key] ?? defaults[key]]))
 
 const linesToCategories = value => value.split('\n').map(line => {
   const [id, name, icon] = line.split('|').map(x => x.trim())
@@ -29,6 +33,7 @@ const linesToCategories = value => value.split('\n').map(line => {
 
 export default function MasterSettingsPage() {
   const [config, setConfig] = useState(defaults)
+  const [paymentSettings, setPaymentSettings] = useState(paymentDefaults)
   const [broadcast, setBroadcast] = useState({ title: '', body: '', target_role: 'customer' })
   const [vendors, setVendors] = useState([])
   const [logs, setLogs] = useState([])
@@ -39,20 +44,31 @@ export default function MasterSettingsPage() {
   useEffect(() => {
     let active = true
     Promise.race([getDoc(doc(db, 'system_config', 'main')), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))])
-      .then(s => active && s.exists() && setConfig(c => ({ ...c, ...s.data() })))
+      .then(s => active && s.exists() && setConfig(pickConfig(s.data())))
       .catch(() => active && notify('تعذر تحميل الإعدادات، يمكنك تعديلها وحفظها', 'error'))
     return () => { active = false }
   }, [notify])
+  useEffect(() => {
+    let active = true
+    getDoc(doc(db, 'payment_config', 'main')).then(s => active && s.exists() && setPaymentSettings(current => ({ bank_transfer: { ...current.bank_transfer, ...(s.data()?.bank_transfer || {}) } }))).catch(() => {})
+    return () => { active = false }
+  }, [])
   useEffect(() => { const unsubscribe = onSnapshot(collection(db, 'vendors'), s => setVendors(s.docs.map(d => ({ id: d.id, ...d.data() })))); return unsubscribe }, [])
   useEffect(() => { const unsubscribe = onSnapshot(collection(db, 'audit_logs'), s => setLogs(s.docs.map(d => ({ id: d.id, ...d.data() })).slice(0, 40))); return unsubscribe }, [])
 
   const save = async event => {
     event.preventDefault(); setBusy(true)
     try {
-      await setDoc(doc(db, 'system_config', 'main'), { ...config, updated_by: auth.currentUser?.uid || null, updated_at: serverTimestamp() }, { merge: true })
-      await audit('update_master_settings', 'system_config/main', { pricing_tiers: (config.pricing_tiers || []).length, banners: (config.banners || []).length })
-      notify('تم حفظ الإعدادات وتسجيل العملية')
+      const result = await httpsCallable(functions, 'publishSystemConfig')({ patch: pickConfig(config), reason: 'master_settings' })
+      notify(`تم نشر الإعدادات وتسجيل الإصدار ${result.data.version}`)
     } catch (error) { notify(error.message || 'فشل حفظ الإعدادات', 'error') } finally { setBusy(false) }
+  }
+  const savePayment = async () => {
+    setBusy(true)
+    try {
+      const result = await httpsCallable(functions, 'publishPaymentSettings')({ settings: paymentSettings, reason: 'payment_settings' })
+      notify(`تم نشر إعدادات الدفع الآمنة، الإصدار ${result.data.version}`)
+    } catch (error) { notify(error.message || 'فشل حفظ إعدادات الدفع', 'error') } finally { setBusy(false) }
   }
   const sendBroadcast = async () => {
     setBusy(true)
@@ -93,6 +109,7 @@ export default function MasterSettingsPage() {
       <section className="data-card settings-card"><h2>التصنيفات الديناميكية</h2><Field label="المعرّف | الاسم | الأيقونة، تصنيف في كل سطر" value={(config.categories || []).map(c => `${c.id}|${c.name}|${c.icon || ''}`).join('\n')} onChange={e => update('categories', linesToCategories(e.target.value))} /></section>
       <section className="data-card settings-card"><div className="section-heading"><h2>شرائح رسوم التوصيل</h2><Button type="button" variant="secondary" onClick={addTier}>+ شريحة</Button></div>{(config.pricing_tiers || []).map((tier, index) => <div className="form-grid" key={index}><Field label="من كم" type="number" min="0" value={tier.from_km || 0} onChange={e => update('pricing_tiers', config.pricing_tiers.map((item, i) => i === index ? { ...item, from_km: Number(e.target.value) } : item))} /><Field label="إلى كم" type="number" min="0" value={tier.to_km || 0} onChange={e => update('pricing_tiers', config.pricing_tiers.map((item, i) => i === index ? { ...item, to_km: Number(e.target.value) } : item))} /><Field label="الرسم" type="number" min="0" value={tier.fee || 0} onChange={e => update('pricing_tiers', config.pricing_tiers.map((item, i) => i === index ? { ...item, fee: Number(e.target.value) } : item))} /></div>)}</section>
       <section className="data-card settings-card"><h2>خيارات الدخول والشراء</h2><div className="form-grid"><label className="check-field"><input type="checkbox" checked={config.enable_google_auth !== false} onChange={e => update('enable_google_auth', e.target.checked)} /> دخول Google</label><label className="check-field"><input type="checkbox" checked={config.enable_facebook_auth === true} onChange={e => update('enable_facebook_auth', e.target.checked)} /> دخول Facebook</label><label className="check-field"><input type="checkbox" checked={config.enable_whatsapp_otp === true} onChange={e => update('enable_whatsapp_otp', e.target.checked)} /> WhatsApp / OTP</label><label className="check-field"><input type="checkbox" checked={config.enable_guest_shopping !== false} onChange={e => update('enable_guest_shopping', e.target.checked)} /> التسوق كزائر</label></div></section>
+      <section className="data-card settings-card"><h2>إعدادات الدفع والتحويل البنكي</h2><p className="map-help">هذه الشاشة تحفظ بيانات العرض فقط. لا تحفظ مفاتيح API أو كلمات المرور أو رقم حساب كامل. الربط البنكي الفعلي يحتاج مزودًا رسميًا وSecret Manager.</p><div className="form-grid"><label className="check-field"><input type="checkbox" checked={paymentSettings.bank_transfer.enabled === true} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, enabled: e.target.checked } }))} /> تفعيل التحويل البنكي</label><label className="check-field"><input type="checkbox" checked={paymentSettings.bank_transfer.requires_manual_review !== false} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, requires_manual_review: e.target.checked } }))} /> مراجعة يدوية إلزامية</label><Field label="اسم طريقة الدفع" value={paymentSettings.bank_transfer.display_name_ar || ''} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, display_name_ar: e.target.value } }))} /><Field label="اسم البنك" value={paymentSettings.bank_transfer.bank_name || ''} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, bank_name: e.target.value } }))} /><Field label="اسم صاحب الحساب" value={paymentSettings.bank_transfer.account_holder || ''} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, account_holder: e.target.value } }))} /><Field label="رقم الحساب المقنع فقط" value={paymentSettings.bank_transfer.account_number_masked || ''} placeholder="•••• 1234" onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, account_number_masked: e.target.value } }))} /><Field label="العملة" value={paymentSettings.bank_transfer.currency || 'SYP'} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, currency: e.target.value } }))} /><Field label="تعليمات التحويل" value={paymentSettings.bank_transfer.instructions_ar || ''} onChange={e => setPaymentSettings(s => ({ ...s, bank_transfer: { ...s.bank_transfer, instructions_ar: e.target.value } }))} /><Button type="button" busy={busy} onClick={savePayment}>حفظ إعدادات الدفع الآمنة</Button></div></section>
       <section className="data-card settings-card"><h2>الإشعارات الجماعية</h2><div className="form-grid"><Field label="العنوان" value={broadcast.title} onChange={e => setBroadcast({ ...broadcast, title: e.target.value })} /><Field label="النص" value={broadcast.body} onChange={e => setBroadcast({ ...broadcast, body: e.target.value })} /><label className="field"><span>الفئة</span><select value={broadcast.target_role} onChange={e => setBroadcast({ ...broadcast, target_role: e.target.value })}><option value="customer">العملاء</option><option value="courier">المناديب</option><option value="vendor_admin">التجار</option><option value="all">الجميع</option></select></label><Button type="button" busy={busy} onClick={sendBroadcast}>إرسال إشعار</Button></div></section>
       <section className="data-card settings-card"><div className="section-heading"><h2>البنرات</h2><Button type="button" variant="secondary" onClick={addBanner}>+ بنر</Button></div>{(config.banners || []).map((banner, index) => <div className="banner-config" key={index}><Field label="العنوان" value={banner.title || ''} onChange={e => update('banners', config.banners.map((b, i) => i === index ? { ...b, title: e.target.value } : b))} /><Field label="رابط الصورة" value={banner.image_url || ''} onChange={e => update('banners', config.banners.map((b, i) => i === index ? { ...b, image_url: e.target.value } : b))} /><label className="field"><span>رفع صورة WebP أقل من 150KB</span><input type="file" accept="image/*" disabled={uploadBusy} onChange={e => uploadAsset(e, `banner_${index}`, 'banners')} /></label><label className="check-field"><input type="checkbox" checked={banner.is_active !== false} onChange={e => update('banners', config.banners.map((b, i) => i === index ? { ...b, is_active: e.target.checked } : b))} /> فعال</label></div>)}</section>
       <section className="data-card settings-card"><h2>المتاجر والعروض</h2><label className="field"><span>متاجر التوصيل المجاني</span><select multiple value={config.free_delivery_vendor_ids || []} onChange={e => update('free_delivery_vendor_ids', [...e.target.selectedOptions].map(o => o.value))}>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label><label className="field"><span>المتاجر المميزة</span><select multiple value={config.featured_vendor_ids || []} onChange={e => update('featured_vendor_ids', [...e.target.selectedOptions].map(o => o.value))}>{vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label><Button type="submit" busy={busy}>حفظ كل الإعدادات</Button></section>

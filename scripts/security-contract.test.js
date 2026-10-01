@@ -11,6 +11,7 @@ const courier = fs.readFileSync(path.join(root, 'courier_app', 'lib', 'common.da
 const courierOrders = fs.readFileSync(path.join(root, 'courier_app', 'lib', 'screens', 'orders_screen.dart'), 'utf8');
 const merchant = fs.readFileSync(path.join(root, 'merchant_app', 'lib', 'common.dart'), 'utf8');
 const adminFirebase = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'firebase.js'), 'utf8');
+const masterSettings = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'MasterSettingsPage.jsx'), 'utf8');
 const adminSettings = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'OperationsPages.jsx'), 'utf8');
 const changeRequests = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'ChangeRequestsPage.jsx'), 'utf8');
 const envSafety = fs.readFileSync(path.join(root, 'scripts', 'test-env-safety.js'), 'utf8');
@@ -70,4 +71,12 @@ assert(!/defaultValue: true/.test(customer.match(/const useFirebaseEmulators[\s\
 assert(/instanceFor\(region: 'europe-west1'\)/.test(customer) && /instanceFor\(region: 'europe-west1'\)/.test(courier) && /instanceFor\(region: 'europe-west1'\)/.test(merchant), 'Flutter clients must target the deployed europe-west1 Functions region');
 assert(!/FirebaseFunctions\.instance\.httpsCallable/.test(customer + courierOrders) && /requestChangeToWallet/.test(courierOrders) && !/httpsCallable\('changeToWallet'/.test(courierOrders), 'clients must use the current callable names and regional Functions client');
 assert(/getFunctions\(app, 'europe-west1'\)/.test(adminFirebase), 'admin dashboard must target the deployed europe-west1 Functions region');
+assert(/exports\.publishSystemConfig/.test(functions) && /httpsCallable\(functions, 'publishSystemConfig'\)/.test(masterSettings), 'master settings must publish through the validated callable');
+assert(!/setDoc\(doc\(db, 'system_config'/.test(masterSettings) && !/setDoc\(doc\(collection\(db, 'audit_logs'/.test(masterSettings), 'master settings must not write config or audit records directly from the browser');
+assert(/exports\.publishPaymentSettings/.test(functions) && /httpsCallable\(functions, 'publishPaymentSettings'\)/.test(masterSettings), 'payment settings must use a dedicated callable');
+assert(/payment_config\/main/.test(functions) && /public_payment_config\/main/.test(functions) && /payment_config_revisions/.test(functions), 'payment settings must have private, public, and revision projections');
+assert(/secret\|password\|token\|api/.test(functions) && /account_number\$/.test(functions), 'payment settings must reject secrets and full account numbers');
+const publicConfigBlock = functions.slice(functions.indexOf('const PUBLIC_CONFIG_KEYS'), functions.indexOf('function buildPublicSystemConfig'));
+assert(!/commission_by_zone|courier_min_withdrawal|merchant_min_withdrawal/.test(publicConfigBlock), 'internal commissions and withdrawal thresholds must not be public');
+assert(/match \/payment_config\/{configId} \{ allow read: if admin\(\); allow write: if false; \}/.test(rules) && /match \/public_payment_config\/{configId} \{ allow read: if configId == 'main'; allow write: if false; \}/.test(rules), 'payment config rules must separate private and public documents');
 console.log('Security contract tests passed.');
