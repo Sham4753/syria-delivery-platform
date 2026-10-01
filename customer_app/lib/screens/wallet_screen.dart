@@ -5,7 +5,7 @@ class CustomerWalletPage extends StatelessWidget {
 
   Future<void> _topUp(BuildContext context, String method, String reference) async {
     try {
-      await FirebaseFunctions.instance.httpsCallable('topUpWallet').call({'method': method, 'reference': reference.trim()});
+      await appFunctions.httpsCallable('topUpWallet').call({'method': method, 'reference': reference.trim()});
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال طلب الشحن للمراجعة')));
     } on FirebaseFunctionsException catch (e) {
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? 'تعذر تنفيذ الشحن')));

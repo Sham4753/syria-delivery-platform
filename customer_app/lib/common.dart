@@ -20,6 +20,8 @@ export 'package:flutter_map/flutter_map.dart';
 export 'package:latlong2/latlong.dart' hide Path;
 export 'package:url_launcher/url_launcher.dart';
 
+final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
+
 const networkTimeout = Duration(seconds: 3);
 
 Future<T> withNetworkTimeout<T>(Future<T> request, {Duration? timeout}) =>
@@ -166,7 +168,7 @@ Future<void> connectToFirebaseEmulators() async {
   final host = emulatorHost();
   await FirebaseAuth.instance.useAuthEmulator(host, 9099);
   FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
-  FirebaseFunctions.instance.useFunctionsEmulator(host, 5001);
+  appFunctions.useFunctionsEmulator(host, 5001);
 }
 
 Future<void> registerPushToken() async {

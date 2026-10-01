@@ -333,7 +333,7 @@ class OrderTile extends StatelessWidget {
   Future<void> claim() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    await FirebaseFunctions.instance.httpsCallable('claimCourierOrder').call({'order_id': id});
+    await appFunctions.httpsCallable('claimCourierOrder').call({'order_id': id});
   }
 
   Future<void> changeToWallet(BuildContext context) async {
@@ -362,7 +362,7 @@ class OrderTile extends StatelessWidget {
       ),
     );
     if (value == null || value.isEmpty) return;
-    await FirebaseFunctions.instance.httpsCallable('changeToWallet').call({
+    await appFunctions.httpsCallable('requestChangeToWallet').call({
       'order_id': id,
       'amount': num.tryParse(value) ?? 0,
     });
@@ -370,7 +370,7 @@ class OrderTile extends StatelessWidget {
 
   Future<void> setStatus(BuildContext context, String status) async {
     if (status != 'delivered') {
-      await FirebaseFunctions.instance.httpsCallable('transitionOrderStatus').call({
+      await appFunctions.httpsCallable('transitionOrderStatus').call({
         'order_id': id,
         'status': status,
       });
@@ -403,7 +403,7 @@ class OrderTile extends StatelessWidget {
     );
     if (confirmed == null) return;
     try {
-      await FirebaseFunctions.instance.httpsCallable('completeDelivery').call({
+      await appFunctions.httpsCallable('completeDelivery').call({
         'order_id': id,
         'otp': confirmed,
       });

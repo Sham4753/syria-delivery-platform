@@ -7,6 +7,10 @@ const errands = fs.readFileSync(path.join(root, 'functions', 'errands.js'), 'utf
 const errandScreen = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'screens', 'errand_screen.dart'), 'utf8');
 const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
 const customer = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'common.dart'), 'utf8');
+const courier = fs.readFileSync(path.join(root, 'courier_app', 'lib', 'common.dart'), 'utf8');
+const courierOrders = fs.readFileSync(path.join(root, 'courier_app', 'lib', 'screens', 'orders_screen.dart'), 'utf8');
+const merchant = fs.readFileSync(path.join(root, 'merchant_app', 'lib', 'common.dart'), 'utf8');
+const adminFirebase = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'firebase.js'), 'utf8');
 const adminSettings = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'OperationsPages.jsx'), 'utf8');
 const changeRequests = fs.readFileSync(path.join(root, 'admin-dashboard', 'src', 'components', 'ChangeRequestsPage.jsx'), 'utf8');
 const envSafety = fs.readFileSync(path.join(root, 'scripts', 'test-env-safety.js'), 'utf8');
@@ -63,4 +67,7 @@ assert(/match \/wallet_topups\/{topupId} \{ allow read: if signedIn\(\) && resou
 assert(/role\('customer'\).*request\.resource\.data\.customer_id == request\.auth\.uid/.test(rules), 'ratings must be created by customers only');
 assert(/collection\('public_vendors'\)/.test(customer), 'customer must read sanitized public vendor catalog');
 assert(!/defaultValue: true/.test(customer.match(/const useFirebaseEmulators[\s\S]{0,160}/)?.[0] || ''), 'production must not default to Firebase emulators');
+assert(/instanceFor\(region: 'europe-west1'\)/.test(customer) && /instanceFor\(region: 'europe-west1'\)/.test(courier) && /instanceFor\(region: 'europe-west1'\)/.test(merchant), 'Flutter clients must target the deployed europe-west1 Functions region');
+assert(!/FirebaseFunctions\.instance\.httpsCallable/.test(customer + courierOrders) && /requestChangeToWallet/.test(courierOrders) && !/httpsCallable\('changeToWallet'/.test(courierOrders), 'clients must use the current callable names and regional Functions client');
+assert(/getFunctions\(app, 'europe-west1'\)/.test(adminFirebase), 'admin dashboard must target the deployed europe-west1 Functions region');
 console.log('Security contract tests passed.');

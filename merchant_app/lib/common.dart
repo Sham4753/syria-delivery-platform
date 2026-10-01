@@ -12,6 +12,8 @@ export 'package:firebase_auth/firebase_auth.dart';
 export 'package:firebase_core/firebase_core.dart';
 export 'package:flutter/material.dart';
 
+final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
+
 bool merchantIsOpen(Map<String, dynamic> data) {
   final hours = data['opening_hours'] as Map<String, dynamic>?;
   if (hours == null) return true;
@@ -67,5 +69,5 @@ Future<void> connectToFirebaseEmulators() async {
   final host = emulatorHost();
   await FirebaseAuth.instance.useAuthEmulator(host, 9099);
   FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
-  FirebaseFunctions.instance.useFunctionsEmulator(host, 5001);
+  appFunctions.useFunctionsEmulator(host, 5001);
 }
