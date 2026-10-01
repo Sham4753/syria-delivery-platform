@@ -1,6 +1,7 @@
 import 'common.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'screens/login_screen.dart';
+import 'screens/orders_screen.dart';
 
 Future<void> bootstrapCourierApp() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,7 +69,15 @@ class CourierApp extends StatelessWidget {
         ),
       ),
     ),
-    home: const LoginPage(),
+    home: StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.idTokenChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        return snapshot.data == null ? const LoginPage() : const CourierGate();
+      },
+    ),
   );
 }
 

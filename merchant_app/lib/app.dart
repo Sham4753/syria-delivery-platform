@@ -68,7 +68,15 @@ class MerchantApp extends StatelessWidget {
         ),
       ),
     ),
-    home: const LoginPage(),
+    home: StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.idTokenChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        return snapshot.data == null ? const LoginPage() : const MerchantGate();
+      },
+    ),
   );
 }
 

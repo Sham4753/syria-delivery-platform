@@ -63,7 +63,7 @@ service cloud.firestore {
       match /redemptions/{orderId} { allow read: if admin(); allow write: if false; }
     }
     match /ratings/{ratingId} {
-      allow read: if signedIn();
+      allow read: if admin() || (signedIn() && orderParty(resource.data.order_id));
       allow create: if signedIn() && role('customer') && ratingId == request.resource.data.order_id && request.resource.data.customer_id == request.auth.uid
         && get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.customer_id == request.auth.uid
         && get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.status == 'delivered'

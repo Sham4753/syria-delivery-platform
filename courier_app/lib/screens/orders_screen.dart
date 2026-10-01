@@ -9,20 +9,43 @@ class CourierGate extends StatelessWidget {
   const CourierGate({Key? key});
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const SessionDeniedPage(message: 'انتهت جلسة الدخول. سجّل الدخول مجدداً.');
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('couriers')
-          .doc(uid)
-          .snapshots(),
-      builder: (context, snapshot) {
-        final data = snapshot.data?.data() as Map<String, dynamic>?;
-        if (data?['zone_id'] == null || data?['zone_id'] == '')
-          return const ZoneSetup();
-        return const CourierHome();
+      stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+      builder: (context, profileSnapshot) {
+        final profile = profileSnapshot.data?.data() as Map<String, dynamic>?;
+        if (profileSnapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        if (profile?['role'] != 'courier') {
+          return const SessionDeniedPage(message: 'هذا الحساب غير مخصص لتطبيق المندوب.');
+        }
+        return StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance.collection('couriers').doc(uid).snapshots(),
+          builder: (context, snapshot) {
+            final data = snapshot.data?.data() as Map<String, dynamic>?;
+            if (data?['zone_id'] == null || data?['zone_id'] == '') return const ZoneSetup();
+            return const CourierHome();
+          },
+        );
       },
     );
   }
+}
+
+class SessionDeniedPage extends StatelessWidget {
+  final String message;
+  const SessionDeniedPage({Key? key, required this.message}) : super(key: key);
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('صلاحية غير مكتملة')),
+    body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Text(message, textAlign: TextAlign.center),
+      const SizedBox(height: 16),
+      FilledButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text('تسجيل الخروج')),
+    ])),),
+  );
 }
 
 class ZoneSetup extends StatelessWidget {
