@@ -116,6 +116,13 @@ function couponDiscount(coupon, subtotal, deliveryFee) {
   return 0;
 }
 const COUPON_CODE_PATTERN = /^[A-Z0-9_-]{2,40}$/;
+const DOC_ID_PATTERN = /^(?!\.{1,2}$)[^/\s]{1,128}$/;
+const isFreeDeliveryVendor = (config, vendorId) => Array.isArray(config?.free_delivery_vendor_ids) && config.free_delivery_vendor_ids.includes(vendorId);
+function computeDeliveryFee({zone, config, vendorId}) {
+  const zoneMultiplier = Number(zone?.surge_multiplier || 1);
+  const globalMultiplier = config?.surge_enabled === true ? Number(config.surge_multiplier || 1) : 1;
+  return money(isFreeDeliveryVendor(config, vendorId) ? 0 : Number(zone?.delivery_fee_base || config?.default_delivery_fee || 0) * zoneMultiplier * globalMultiplier);
+}
 function evaluateCoupon({coupon, redemptionExists, customerId, subtotal, deliveryFee, now = Date.now()}) {
   const invalid = {valid: false, discount: 0};
   if (!coupon || coupon.is_active !== true) return invalid;
@@ -131,24 +138,27 @@ function evaluateCoupon({coupon, redemptionExists, customerId, subtotal, deliver
 exports.previewCoupon = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const uid = context.auth.uid;
-  const code = String(data?.code || '').trim().toUpperCase();
-  const subtotal = Number(data?.subtotal); const deliveryFee = Number(data?.delivery_fee);
-  if (!code || !Number.isFinite(subtotal) || !Number.isFinite(deliveryFee) || subtotal < 0 || deliveryFee < 0) throw new HttpsError('invalid-argument', 'بيانات الكوبون غير صالحة');
-  const rateRef = db.doc(`coupon_preview_rate_limits/${uid}`);
+  const code = String(data?.code || '').trim().toUpperCase(); const subtotal = Number(data?.subtotal);
+  const vendorId = String(data?.vendor_id || '').trim(); const zoneId = String(data?.zone_id || '').trim();
+  if (!code || !Number.isFinite(subtotal) || subtotal < 0 || !DOC_ID_PATTERN.test(vendorId) || !DOC_ID_PATTERN.test(zoneId)) throw new HttpsError('invalid-argument', 'بيانات الكوبون غير صالحة');
+  const rateRef = db.doc(`coupon_preview_rate_limits/${uid}`); const zoneRef = db.doc(`zones/${zoneId}`); const configRef = db.doc('system_config/main');
   const couponRef = COUPON_CODE_PATTERN.test(code) ? db.doc(`coupons/${code}`) : null;
   const invalid = {valid: false, message: 'الكوبون غير صالح'};
   const now = Date.now();
   return db.runTransaction(async (tx) => {
-    const [rateSnap, couponSnap, redemptionSnap] = await Promise.all([
-      tx.get(rateRef), couponRef ? tx.get(couponRef) : null, couponRef ? tx.get(couponRef.collection('redemptions').doc(uid)) : null,
+    const [rateSnap, zoneSnap, configSnap, couponSnap, redemptionSnap] = await Promise.all([
+      tx.get(rateRef), tx.get(zoneRef), tx.get(configRef), couponRef ? tx.get(couponRef) : null, couponRef ? tx.get(couponRef.collection('redemptions').doc(uid)) : null,
     ]);
     const state = rateSnap.data() || {}; const windowStart = Number(state.window_start || 0);
     const inWindow = windowStart > 0 && now - windowStart < 60000;
     if (inWindow && Number(state.count || 0) >= 10) throw new HttpsError('resource-exhausted', 'حاول لاحقاً');
     tx.set(rateRef, {window_start: inWindow ? windowStart : now, count: inWindow ? Number(state.count || 0) + 1 : 1});
     if (!couponRef || !couponSnap.exists) return invalid;
-    const verdict = evaluateCoupon({coupon: couponSnap.data(), redemptionExists: redemptionSnap.exists, customerId: uid, subtotal, deliveryFee, now});
-    return verdict.valid ? {valid: true, discount: verdict.discount} : invalid;
+    const deliveryFee = computeDeliveryFee({zone: zoneSnap.data(), config: configSnap.data() || {}, vendorId});
+    const coupon = couponSnap.data();
+    const verdict = evaluateCoupon({coupon, redemptionExists: redemptionSnap.exists, customerId: uid, subtotal, deliveryFee, now});
+    if (!verdict.valid) return invalid;
+    return {valid: true, discount: verdict.discount, applies_to: coupon.type === 'free_delivery' ? 'delivery' : 'items', delivery_fee: deliveryFee};
   });
 });
 
@@ -698,8 +708,9 @@ exports.createOrder = onCall(async (data, context) => {
       return {product_id: productSnaps[index].id, name: String(product.name || ''), price: unitPrice, quantity, selected_modifiers: modifiers};
     });
 
-    const config = configSnap.data() || {}; const zoneMultiplier = Number(zoneSnap.data()?.surge_multiplier || 1); const globalMultiplier = config.surge_enabled === true ? Number(config.surge_multiplier || 1) : 1; const freeDelivery = Array.isArray(config.free_delivery_vendor_ids) && config.free_delivery_vendor_ids.includes(vendorId); const deliveryFee = money(freeDelivery ? 0 : Number(zoneSnap.data()?.delivery_fee_base || config.default_delivery_fee || 0) * zoneMultiplier * globalMultiplier);
-    let discount = 0;
+    const config = configSnap.data() || {};
+    const deliveryFee = computeDeliveryFee({zone: zoneSnap.data(), config, vendorId});
+    let discount = 0; let couponType = null;
     if (couponRef) {
       const couponSnap = await tx.get(couponRef);
       const coupon = couponSnap.data();
@@ -707,7 +718,7 @@ exports.createOrder = onCall(async (data, context) => {
       const customerRedemption = await tx.get(redemptionRef);
       const verdict = evaluateCoupon({coupon, redemptionExists: customerRedemption.exists, customerId, subtotal, deliveryFee, now});
       if (!couponSnap.exists || !verdict.valid) throw new HttpsError('failed-precondition', 'كود الخصم غير صالح أو منتهي');
-      discount = verdict.discount;
+      discount = verdict.discount; couponType = coupon.type;
       tx.set(redemptionRef, {customer_id: customerId, order_id: orderRef.id, discount_amount: discount, redeemed_at: FieldValue.serverTimestamp()});
       tx.update(couponRef, {used_count: FieldValue.increment(1)});
     }
@@ -731,11 +742,11 @@ exports.createOrder = onCall(async (data, context) => {
     tx.set(rateRef, {window_start: windowStart && now - windowStart < 60 * 1000 ? windowStart : now, count: windowStart && now - windowStart < 60 * 1000 ? count + 1 : 1, updated_at: FieldValue.serverTimestamp()}, {merge: true});
     tx.create(orderRef, {
       customer_id: customerId, vendor_id: vendorId, zone_id: zoneId, items, subtotal, delivery_fee: deliveryFee,
-      coupon_code: discount > 0 ? couponCode : null, coupon_applied: discount > 0, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
+      coupon_code: discount > 0 ? couponCode : null, coupon_applied: discount > 0, coupon_type: discount > 0 ? couponType : null, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
       idempotency_key: idempotencyKey,
       status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_status: cashDue === 0 ? 'paid' : 'unpaid', wallet_amount: walletUsed, loyalty_points_used: pointsUsed, cash_due: cashDue, cash_change_for: cashChangeFor,
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
-      created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
+      created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: isFreeDeliveryVendor(config, vendorId),
     });
     if (emulatorOnly && smokeFailAfterOrderWrite) {
       throw new HttpsError('internal', 'اختبار ذريّة محلي فقط');
@@ -819,19 +830,34 @@ exports.syncPublicVendor = onDocumentWritten('vendors/{vendorId}', async (event)
   return publicRef.set(publicVendorProjection(event.data.after.data()));
 });
 
+function commissionBaseOf(order) {
+  const discount = order.coupon_type === 'free_delivery' ? 0 : Math.max(0, Number(order.discount_amount || 0));
+  return Math.max(0, Number(order.subtotal || 0) - discount);
+}
+const alreadyExists = (error) => error?.code === 6 || error?.code === 'already-exists';
+async function bookCommissionAtDelivery(orderId, order) {
+  let commission = Number(order.commission); let base = Number(order.commission_base); let rate = Number(order.commission_rate);
+  if (!Number.isFinite(commission) || !Number.isFinite(base) || !Number.isFinite(rate)) {
+    rate = Number((await db.doc(`vendors/${order.vendor_id}`).get()).data()?.commission_rate || 0); base = commissionBaseOf(order); commission = money(base * rate / 100);
+  }
+  if (!(commission > 0)) return;
+  await db.doc(`financial_ledger/commission_${orderId}`).create({type: 'order_commission', direction: 'credit', amount: commission, commission_base: base, rate, order_id: orderId, vendor_id: order.vendor_id, created_at: FieldValue.serverTimestamp()}).catch((error) => {
+    if (!alreadyExists(error)) throw error;
+  });
+}
+async function reverseCommissionIfBooked(orderId, order) {
+  const booked = await db.doc(`financial_ledger/commission_${orderId}`).get(); if (!booked.exists) return;
+  await db.doc(`financial_ledger/commission_reversal_${orderId}`).create({type: 'order_commission_reversal', direction: 'debit', amount: Number(booked.data()?.amount || 0), order_id: orderId, vendor_id: order.vendor_id, reason: order.status, created_at: FieldValue.serverTimestamp()}).catch((error) => {
+    if (!alreadyExists(error)) throw error;
+  });
+}
 exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (event) => {
   const snap = event.data; if (!snap) return;
   const order = snap.data();
-  // createOrder is the single source of truth for coupon validation and totals.
-  // Re-reading the coupon here could overwrite a valid discount after used_count changed.
   const discount = Math.max(0, Number(order.discount_amount || 0));
-  const vendor = await db.doc(`vendors/${order.vendor_id}`).get(); const rate = Number(vendor.data()?.commission_rate || 0); const commissionBase = Math.max(0, Number(order.subtotal || 0) - Number(order.discount_amount || 0)); const commission = money(commissionBase * rate / 100);
+  const vendor = await db.doc(`vendors/${order.vendor_id}`).get(); const rate = Number(vendor.data()?.commission_rate || 0); const commissionBase = commissionBaseOf(order); const commission = money(commissionBase * rate / 100);
   const etaMinutes = Math.max(10, Number(order.prep_minutes || 20) + 15);
-  await snap.ref.update({commission, discount_amount: discount, commission_base: commissionBase, total: Number(order.total || Math.max(0, Number(order.subtotal || 0) + Number(order.delivery_fee || 0) - discount)), eta_minutes: etaMinutes, synced: true, updated_at: FieldValue.serverTimestamp()});
-  const ledgerRef = db.doc(`financial_ledger/commission_${event.params.orderId}`);
-  await ledgerRef.create({type: 'order_commission', direction: 'credit', amount: commission, commission_base: commissionBase, rate, order_id: event.params.orderId, vendor_id: order.vendor_id, created_at: FieldValue.serverTimestamp()}).catch((error) => {
-    if (error.code !== 6 && error.code !== 'already-exists') throw error;
-  });
+  await snap.ref.update({commission, commission_rate: rate, discount_amount: discount, commission_base: commissionBase, total: Number(order.total || Math.max(0, Number(order.subtotal || 0) + Number(order.delivery_fee || 0) - discount)), eta_minutes: etaMinutes, synced: true, updated_at: FieldValue.serverTimestamp()});
 });
 
 exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (event) => {
@@ -853,8 +879,10 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
   if (statusChanged && ['cancelled', 'failed_delivery', 'returned'].includes(after.status)) {
     const customerFault = after.status === 'failed_delivery' && CUSTOMER_FAULT_FAILURE_REASONS.includes(after.failure_reason);
     const courierMadeTheTrip = ['picked_up', 'on_the_way'].includes(before.status);
+    await reverseCommissionIfBooked(event.params.orderId, after);
     await event.data.after.ref.update({commission: 0, commission_voided: true, ...(customerFault ? {vendor_compensation_due: true} : {}), ...(customerFault && courierMadeTheTrip ? {courier_compensation_due: true} : {}), updated_at: FieldValue.serverTimestamp()});
   }
+  if (statusChanged && after.status === 'delivered') await bookCommissionAtDelivery(event.params.orderId, after);
   if (!statusChanged) return;
   const body = `حالة طلبك: ${after.status}`; await notifyUser(after.customer_id, 'تحديث الطلب', body, {order_id: event.params.orderId}); await notifyUser(after.courier_id, 'تحديث مهمة التوصيل', body, {order_id: event.params.orderId});
   if (after.vendor_id) {

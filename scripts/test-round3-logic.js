@@ -47,6 +47,10 @@ class DocRef {
   async get() { return snap(this.db, this.path); }
   async update(data) { this.db.docs.set(this.path, materialize(this.db.read(this.path) || {}, data, false)); }
   async set(data, opts) { this.db.docs.set(this.path, materialize(opts?.merge ? this.db.read(this.path) || {} : {}, data, !opts?.merge)); }
+  async create(data) {
+    if (this.db.read(this.path) !== undefined) throw Object.assign(new Error(`ALREADY_EXISTS ${this.path}`), {code: 6});
+    this.db.docs.set(this.path, materialize({}, data, true));
+  }
 }
 function snap(db, p) {
   const data = db.read(p);
@@ -201,12 +205,13 @@ const order = (extra) => ({customer_id: 'cust1', vendor_id: 'v1', zone_id: 'z1',
 
   // ------------------------------------------------------------ coupons
   console.log('coupons');
-  const preview = (code, uid = 'cust1', subtotal = 10000, delivery_fee = 2000) => fns.previewCoupon({code, subtotal, delivery_fee}, as(uid));
+  const preview = (code, uid = 'cust1', subtotal = 10000) => fns.previewCoupon({code, subtotal, vendor_id: 'v1', zone_id: 'z1'}, as(uid));
   const INVALID = {valid: false, message: 'الكوبون غير صالح'};
   await test('previewCoupon returns the discount for valid coupons (and does not crash)', async () => {
     seedWorld();
-    assert.deepStrictEqual(await preview('good'), {valid: true, discount: 1000});
-    assert.deepStrictEqual(await preview('FREEDEL'), {valid: true, discount: 2000});
+    assert.deepStrictEqual(await preview('good'), {valid: true, discount: 1000, applies_to: 'items', delivery_fee: 2000});
+    assert.deepStrictEqual(await preview('FREEDEL'), {valid: true, discount: 2000, applies_to: 'delivery', delivery_fee: 2000});
+    await fails(fns.previewCoupon({code: 'GOOD', subtotal: 10000}, as('cust1')), 'invalid-argument', 'missing vendor and zone');
   });
   await test('every kind of invalid coupon gets the identical answer (no hints for guessing)', async () => {
     seedWorld();
@@ -238,6 +243,16 @@ const order = (extra) => ({customer_id: 'cust1', vendor_id: 'v1', zone_id: 'z1',
       let created = true; try { await place(code, `k-agree-${i += 1}`); } catch (error) { created = false; assert.strictEqual(error.code, 'failed-precondition', `${code}: ${error.message}`); }
       assert.strictEqual(created, previewed, `${code}: preview=${previewed} createOrder=${created}`);
     }
+  });
+
+  await test('previewCoupon uses the same delivery fee as createOrder (zone surge, free-delivery vendors)', async () => {
+    seedWorld(); db.seed('zones/z1', {is_accepting_orders: true, delivery_fee_base: 2000, surge_multiplier: 1.5});
+    assert.deepStrictEqual(await preview('FREEDEL'), {valid: true, discount: 3000, applies_to: 'delivery', delivery_fee: 3000});
+    const created = db.read(`orders/${(await place('FREEDEL', 'k-surge')).order_id}`);
+    assert.strictEqual(created.delivery_fee, 3000); assert.strictEqual(created.discount_amount, 3000); assert.strictEqual(created.total, 10000);
+    db.remove('coupon_preview_rate_limits/cust1'); db.seed('system_config/main', {free_delivery_vendor_ids: ['v1']});
+    assert.deepStrictEqual(await preview('FREEDEL'), INVALID, 'a free-delivery vendor has no fee to discount');
+    await fails(place('FREEDEL', 'k-freevendor'), 'failed-precondition', 'createOrder agrees');
   });
 
   // ------------------------------------------------------------ cancellation, failed delivery and refunds
@@ -329,6 +344,41 @@ const order = (extra) => ({customer_id: 'cust1', vendor_id: 'v1', zone_id: 'z1',
     assert(!out.vendor_compensation_due); assert(!out.courier_compensation_due);
     const back = await trigger('t4', order({status: 'failed_delivery', failure_reason: 'customer_refused'}), order({status: 'returned', failure_reason: 'customer_refused'}));
     assert(!back.vendor_compensation_due);
+  });
+
+  // ------------------------------------------------------------ commission
+  console.log('commission');
+  const commissionTrigger = (id) => fns.calculateOrderCommission({params: {orderId: id}, data: {data: () => db.read(`orders/${id}`), ref: db.doc(`orders/${id}`)}});
+  const deliver = async (id, from, to) => { db.seed(`orders/${id}`, to); await fns.notifyOrderChange({params: {orderId: id}, data: {before: {data: () => from}, after: {data: () => to, ref: db.doc(`orders/${id}`)}}}); };
+  await test('commission base: a free-delivery coupon does not reduce it, an item discount does; nothing is booked at creation', async () => {
+    seedWorld();
+    const free = await place('FREEDEL', 'k-c1'); await commissionTrigger(free.order_id);
+    const a = db.read(`orders/${free.order_id}`);
+    assert.strictEqual(a.coupon_type, 'free_delivery'); assert.strictEqual(a.commission_base, 10000); assert.strictEqual(a.commission, 1000); assert.strictEqual(a.commission_rate, 10);
+    const item = await place('GOOD', 'k-c2'); await commissionTrigger(item.order_id);
+    const b = db.read(`orders/${item.order_id}`); assert.strictEqual(b.commission_base, 9000); assert.strictEqual(b.commission, 900);
+    assert.strictEqual(db.read(`financial_ledger/commission_${free.order_id}`), undefined); assert.strictEqual(db.read(`financial_ledger/commission_${item.order_id}`), undefined);
+  });
+  await test('commission is booked once, at delivery (also for orders without a courier), and replays do nothing', async () => {
+    seedWorld(); const placed = await place('GOOD', 'k-c3'); await commissionTrigger(placed.order_id);
+    const o = db.read(`orders/${placed.order_id}`);
+    await deliver(placed.order_id, {...o, status: 'on_the_way'}, {...o, status: 'delivered', courier_id: 'courier1', cash_due: o.total});
+    const entry = db.read(`financial_ledger/commission_${placed.order_id}`);
+    assert.strictEqual(entry.amount, 900); assert.strictEqual(entry.direction, 'credit'); assert.strictEqual(entry.rate, 10); assert.strictEqual(entry.commission_base, 9000);
+    await deliver(placed.order_id, {...o, status: 'on_the_way'}, {...o, status: 'delivered', courier_id: 'courier1', cash_due: o.total}); // trigger retry
+    assert.strictEqual(db.read(`financial_ledger/commission_${placed.order_id}`).amount, 900);
+    const pickup = await place('', 'k-c4'); await commissionTrigger(pickup.order_id); const p = db.read(`orders/${pickup.order_id}`);
+    await deliver(pickup.order_id, {...p, status: 'ready_for_pickup'}, {...p, status: 'delivered', courier_id: null});
+    assert.strictEqual(db.read(`financial_ledger/commission_${pickup.order_id}`).amount, 1000);
+  });
+  await test('a credit written before this change is reversed once when the order does not complete', async () => {
+    seedWorld(); db.seed('financial_ledger/commission_old1', {type: 'order_commission', direction: 'credit', amount: 500, order_id: 'old1'});
+    await trigger('old1', order({status: 'preparing'}), order({status: 'cancelled'}));
+    const reversal = db.read('financial_ledger/commission_reversal_old1');
+    assert.strictEqual(reversal.direction, 'debit'); assert.strictEqual(reversal.amount, 500);
+    await trigger('old1', order({status: 'preparing'}), order({status: 'cancelled'})); // replay must not throw or duplicate
+    await trigger('new1', order({status: 'preparing'}), order({status: 'cancelled'}));
+    assert.strictEqual(db.read('financial_ledger/commission_reversal_new1'), undefined, 'no credit, so nothing to reverse');
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);

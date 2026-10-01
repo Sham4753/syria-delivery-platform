@@ -18,6 +18,7 @@ class _ProductsPageState extends State<ProductsPage> {
   String? couponCode;
   String? pendingIdempotencyKey;
   num discount = 0;
+  num deliveryDiscount = 0; // free-delivery coupons discount the delivery fee, not the items
   num get subtotal => cart.values.fold<num>(0, (sum, item) => sum + (item['price'] ?? 0) * (item['quantity'] ?? 1));
 
   Future<bool> ensureSignedIn() async {
@@ -70,13 +71,33 @@ class _ProductsPageState extends State<ProductsPage> {
     if (!await ensureSignedIn()) return;
     final value = coupon.text.trim().toUpperCase();
     if (value.isEmpty) return;
-    final snap = await FirebaseFirestore.instance.collection('coupons').doc(value).get();
-    final data = snap.data();
-    if (!snap.exists || data?['is_active'] != true || subtotal < (data?['min_order_amount'] ?? 0)) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الكوبون غير صالح')));
+    // The server decides: coupons are no longer readable from the app, and previewCoupon applies exactly the rules createOrder will apply.
+    try {
+      final result = await FirebaseFunctions.instanceFor(region: 'europe-west1').httpsCallable('previewCoupon').call({
+        'code': value, 'subtotal': subtotal, 'vendor_id': widget.vendorId, 'zone_id': widget.zoneId,
+      });
+      final data = Map<String, dynamic>.from(result.data as Map);
+      if (data['valid'] == true) {
+        final amount = (data['discount'] as num?) ?? 0;
+        final onDelivery = data['applies_to'] == 'delivery';
+        if (mounted) setState(() { couponCode = value; discount = onDelivery ? 0 : amount; deliveryDiscount = onDelivery ? amount : 0; });
+        return;
+      }
+    } on FirebaseFunctionsException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(
+          error.code == 'resource-exhausted' ? 'محاولات كثيرة، حاول بعد قليل' : 'تعذر التحقق من الكوبون، حاول مجددًا',
+        )));
+      }
+      return;
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر التحقق من الكوبون، تحقق من الاتصال')));
       return;
     }
-    setState(() { couponCode = value; discount = data?['type'] == 'percentage' ? subtotal * ((data?['value'] ?? 0) / 100) : (data?['value'] ?? 0); });
+    if (mounted) {
+      setState(() { couponCode = null; discount = 0; deliveryDiscount = 0; });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الكوبون غير صالح')));
+    }
   }
 
   Future<void> checkout() async {
@@ -168,7 +189,7 @@ class _ProductsPageState extends State<ProductsPage> {
             elevation: 12, color: Theme.of(context).colorScheme.primary,
             child: SafeArea(child: ListTile(
               title: Text('${cart.values.fold<int>(0, (s, item) => s + (item['quantity'] as int? ?? 1))} أصناف  •  $subtotal ل.س', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              subtitle: discount > 0 ? Text('الخصم: $discount ل.س', style: const TextStyle(color: Colors.white70)) : null,
+              subtitle: discount + deliveryDiscount > 0 ? Text(deliveryDiscount > 0 ? 'خصم التوصيل: $deliveryDiscount ل.س' : 'الخصم: $discount ل.س', style: const TextStyle(color: Colors.white70)) : null,
               trailing: FilledButton(onPressed: checkout, child: const Text('إتمام الطلب')),
             )),
           ),
