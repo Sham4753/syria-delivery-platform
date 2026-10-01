@@ -100,6 +100,7 @@ class _CourierHomeState extends State<CourierHome> {
   Timer? timer;
   Position? position;
   bool sendingLocation = false;
+  final Set<String> activeOrderIds = <String>{};
   @override
   void initState() {
     super.initState();
@@ -157,25 +158,16 @@ class _CourierHomeState extends State<CourierHome> {
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       if (uid != null) {
-        final active = await FirebaseFirestore.instance
-            .collection('orders')
-            .where('courier_id', isEqualTo: uid)
-            .where(
-              'status',
-              whereIn: ['preparing', 'ready_for_pickup', 'picked_up', 'on_the_way'],
-            )
-            .get();
-        for (final order in active.docs) {
-          await FirebaseFirestore.instance
-              .collection('tracking')
-              .doc(order.id)
-              .set({
-                'order_id': order.id,
-                'courier_id': uid,
-                'location': GeoPoint(current.latitude, current.longitude),
-                'accuracy': current.accuracy,
-                'updated_at': FieldValue.serverTimestamp(),
-              }, SetOptions(merge: true));
+        // تعتمد التتبعات على قائمة الطلبات الموجودة في stream أدناه، فلا نعيد
+        // استعلام الطلبات كل دقيقتين مع كل تحديث GPS.
+        for (final orderId in activeOrderIds) {
+          await FirebaseFirestore.instance.collection('tracking').doc(orderId).set({
+            'order_id': orderId,
+            'courier_id': uid,
+            'location': GeoPoint(current.latitude, current.longitude),
+            'accuracy': current.accuracy,
+            'updated_at': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
         }
       }
     } on Exception catch (error) {
@@ -246,6 +238,14 @@ class _CourierHomeState extends State<CourierHome> {
             child: StreamBuilder<QuerySnapshot>(
               stream: orders,
               builder: (context, snapshot) {
+                if (snapshot.hasData) {
+                  activeOrderIds
+                    ..clear()
+                    ..addAll(snapshot.data!.docs.where((doc) {
+                      final status = (doc.data() as Map<String, dynamic>)['status'];
+                      return ['preparing', 'ready_for_pickup', 'picked_up', 'on_the_way'].contains(status);
+                    }).map((doc) => doc.id));
+                }
                 if (!snapshot.hasData)
                   return const Center(child: CircularProgressIndicator());
                 if (snapshot.data!.docs.isEmpty)

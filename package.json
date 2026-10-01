@@ -9,6 +9,7 @@
     "test:security-contract": "node scripts/security-contract.test.js",
     "test:fixes": "node scripts/time-utils.test.js && node scripts/wallet-guard.test.js && node scripts/security-ops.test.js && node scripts/security-contract.test.js",
     "test:batch2": "node scripts/batch2-contract.test.js && node scripts/time-utils.test.js && node scripts/wallet-guard.test.js",
-    "test:batch3": "node scripts/batch3-session-security.test.js && node scripts/batch2-contract.test.js && node scripts/security-contract.test.js"
+    "test:batch3": "node scripts/batch3-session-security.test.js && node scripts/batch2-contract.test.js && node scripts/security-contract.test.js",
+    "test:batch4": "node scripts/batch4-firestore-performance.test.js && npm run test:batch3"
   }
 }
