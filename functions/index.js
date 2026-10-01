@@ -6,12 +6,13 @@ const functionsV1 = require('firebase-functions/v1');
 const {HttpsError} = require('firebase-functions/v1/https');
 const FUNCTION_REGION = 'europe-west1';
 const {assertAppCheck, consumeQuota, incidentRecord} = require('./security-ops');
+const {logError, logWarn} = require('./logger');
 const onCall = (handler) => functionsV1.region(FUNCTION_REGION).https.onCall(async (data, context) => {
   assertAppCheck(context, HttpsError);
   try {
     return await handler(data, context);
   } catch (error) {
-    if (!(error instanceof HttpsError)) console.error('Callable operation failed', {error: error.message, uid: context.auth?.uid || null});
+    if (!(error instanceof HttpsError)) logError('callable_operation_failed', error, {uid: context.auth?.uid || null});
     throw error;
   }
 });
@@ -660,7 +661,7 @@ exports.paymentWebhook = onRequest(async (req, res) => {
     const result = await applyProviderEvent(event, paymentQuery.docs[0].ref, db.doc(`payment_webhook_events/${event.id}`));
     return res.status(200).json(result);
   } catch (error) {
-    console.error('Payment webhook failed', {event_id: event.id, error: error.message});
+    logError('payment_webhook_failed', error, {event_id: event.id});
     return res.status(error.message === 'payment_amount_currency_mismatch' ? 422 : 409).json({error: error.message});
   }
 });
@@ -1160,7 +1161,7 @@ async function notifyUser(uid, title, body, data = {}) {
       await getMessaging().send({token, notification: {title, body}, data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]))});
     } catch (error) {
       if (error.code === 'messaging/registration-token-not-registered' || error.code === 'messaging/invalid-registration-token') await snap.ref.update({fcm_token: FieldValue.delete()});
-      console.warn(`Notification failed for ${uid}: ${error.code || error.message}`);
+      logWarn('notification_failed', {uid, code: error.code || 'unknown'});
     }
   }
 }

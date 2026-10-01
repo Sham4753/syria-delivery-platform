@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+    show defaultTargetPlatform, kIsWeb, PlatformDispatcher, TargetPlatform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -21,6 +21,17 @@ export 'package:latlong2/latlong.dart' hide Path;
 export 'package:url_launcher/url_launcher.dart';
 
 final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+void installAppErrorHandlers(String appName) {
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('[$appName][flutter_error] ${details.exceptionAsString()}');
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('[$appName][uncaught_error] $error');
+    return true;
+  };
+}
 
 const networkTimeout = Duration(seconds: 15);
 

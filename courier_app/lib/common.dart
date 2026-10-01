@@ -1,6 +1,6 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+    show defaultTargetPlatform, kIsWeb, PlatformDispatcher, TargetPlatform;
 
 import 'dart:async';
 
@@ -21,6 +21,17 @@ export 'package:latlong2/latlong.dart' hide Path;
 export 'package:url_launcher/url_launcher.dart';
 
 final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+void installAppErrorHandlers(String appName) {
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('[$appName][flutter_error] ${details.exceptionAsString()}');
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('[$appName][uncaught_error] $error');
+    return true;
+  };
+}
 
 const useFirebaseEmulators = bool.fromEnvironment(
   'USE_FIREBASE_EMULATORS',

@@ -4,6 +4,7 @@ import 'screens/login_screen.dart';
 
 Future<void> bootstrapMerchantApp() async {
   WidgetsFlutterBinding.ensureInitialized();
+  installAppErrorHandlers('merchant');
   Object? startupError;
   try {
     if (Firebase.apps.isEmpty) {

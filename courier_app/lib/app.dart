@@ -5,6 +5,7 @@ import 'screens/orders_screen.dart';
 
 Future<void> bootstrapCourierApp() async {
   WidgetsFlutterBinding.ensureInitialized();
+  installAppErrorHandlers('courier');
   Object? startupError;
   try {
     if (Firebase.apps.isEmpty) {

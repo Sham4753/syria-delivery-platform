@@ -1,5 +1,6 @@
 const express = require('express');
-const {createHash} = require('node:crypto');
+const {createHash, randomUUID} = require('node:crypto');
+const {logError, logWarn, logInfo} = require('./logger');
 const cors = require('cors');
 const helmet = require('helmet');
 const admin = require('firebase-admin');
@@ -13,6 +14,13 @@ const app = express();
 app.use(helmet());
 app.use(cors({origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true}));
 app.use(express.json({limit: '256kb'}));
+app.use((req, res, next) => {
+  req.requestId = req.get('x-request-id')?.slice(0, 80) || randomUUID();
+  res.set('x-request-id', req.requestId);
+  const started = Date.now();
+  res.on('finish', () => logInfo('http_request', {request_id: req.requestId, method: req.method, path: req.path, status: res.statusCode, duration_ms: Date.now() - started}));
+  next();
+});
 
 const attempts = new Map();
 function rateLimit(key, max = 10, windowMs = 60_000) {
@@ -27,10 +35,10 @@ async function requireUser(req, res, next) {
   const header = req.get('authorization') || '';
   if (!header.startsWith('Bearer ')) return res.status(401).json({error: 'unauthenticated'});
   try { req.user = await auth.verifyIdToken(header.slice(7)); next(); }
-  catch (_) { return res.status(401).json({error: 'invalid_token'}); }
+  catch (error) { logWarn('invalid_token', {request_id: req.requestId, code: error.code || 'invalid_token'}); return res.status(401).json({error: 'invalid_token', request_id: req.requestId}); }
 }
 
-function fail(res, status, message) { return res.status(status).json({error: message}); }
+function fail(res, status, message) { return res.status(status).json({error: message, request_id: res.get('x-request-id')}); }
 
 app.get('/health', (_req, res) => res.json({ok: true, service: 'syria-delivery-private-server', time: new Date().toISOString()}));
 
@@ -108,15 +116,15 @@ app.post('/v1/call/completeDelivery', requireUser, async (req, res) => {
   } catch (error) { return fail(res, error.message === 'otp_locked' ? 429 : 412, error.message === 'otp_locked' ? 'تم تجاوز عدد المحاولات المسموح، انتظر قليلاً' : 'رمز التسليم غير صحيح أو الطلب غير جاهز'); }
 });
 
-app.use((error, _req, res, _next) => { console.error(error); res.status(500).json({error: 'internal'}); });
+app.use((error, req, res, _next) => { logError('http_unhandled_error', error, {request_id: req.requestId, method: req.method, path: req.path}); res.status(500).json({error: 'internal', request_id: req.requestId}); });
 
 async function requeueWaitingOrders() {
   const snapshot = await db.collection('orders').where('dispatch_status', 'in', ['waiting_for_courier', 'requeue']).limit(100).get();
   for (const doc of snapshot.docs) await doc.ref.set({dispatch_status: 'requeue', dispatch_retry_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()}, {merge: true});
 }
 const interval = Number(process.env.DISPATCH_INTERVAL_MS || 60000);
-const timer = setInterval(() => requeueWaitingOrders().catch((error) => console.error('dispatch scheduler', error)), interval);
+const timer = setInterval(() => requeueWaitingOrders().catch((error) => logError('dispatch_scheduler_failed', error)), interval);
 timer.unref();
 
-if (require.main === module) app.listen(Number(process.env.PORT || 8080), process.env.HOST || '0.0.0.0', () => console.log(`Private server listening on ${process.env.HOST || '0.0.0.0'}:${process.env.PORT || 8080}`));
+if (require.main === module) app.listen(Number(process.env.PORT || 8080), process.env.HOST || '0.0.0.0', () => logInfo('server_started', {host: process.env.HOST || '0.0.0.0', port: Number(process.env.PORT || 8080)}));
 module.exports = {app, requeueWaitingOrders};

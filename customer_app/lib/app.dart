@@ -4,6 +4,7 @@ import 'screens/home_screen.dart';
 
 Future<void> bootstrapCustomerApp() async {
   WidgetsFlutterBinding.ensureInitialized();
+  installAppErrorHandlers('customer');
   Object? startupError;
   try {
     if (Firebase.apps.isEmpty) {
