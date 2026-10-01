@@ -89,7 +89,7 @@ class OrderOutbox {
       }
       final payload = Map<String, dynamic>.from(item['payload'] as Map? ?? {});
       try {
-        final result = await FirebaseFunctions.instance
+        final result = await FirebaseFunctions.instanceFor(region: 'europe-west1')
             .httpsCallable('createOrder')
             .call(payload)
             .timeout(const Duration(seconds: 15));

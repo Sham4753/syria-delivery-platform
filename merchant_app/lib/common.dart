@@ -67,5 +67,5 @@ Future<void> connectToFirebaseEmulators() async {
   final host = emulatorHost();
   await FirebaseAuth.instance.useAuthEmulator(host, 9099);
   FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
-  FirebaseFunctions.instance.useFunctionsEmulator(host, 5001);
+  FirebaseFunctions.instanceFor(region: 'europe-west1').useFunctionsEmulator(host, 5001);
 }

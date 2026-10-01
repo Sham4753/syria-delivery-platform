@@ -57,7 +57,7 @@ class _MerchantHomeState extends State<MerchantHome> {
       ),
     );
     if (value == null || value.isEmpty) return;
-    final callable = FirebaseFunctions.instance.httpsCallable(isOpen ? 'closeShift' : 'openShift');
+    final callable = FirebaseFunctions.instanceFor(region: 'europe-west1').httpsCallable(isOpen ? 'closeShift' : 'openShift');
     await callable.call(isOpen
         ? {'shift_id': active.data()?['shift_id'], 'counted_cash': num.tryParse(value) ?? -1}
         : {'owner_type': 'vendor', 'owner_id': widget.vendorId, 'opening_cash': num.tryParse(value) ?? -1});
@@ -69,7 +69,7 @@ class _MerchantHomeState extends State<MerchantHome> {
     int? prepMinutes,
     String? reason,
   }) async {
-    await FirebaseFunctions.instance.httpsCallable('transitionOrderStatus').call({
+    await FirebaseFunctions.instanceFor(region: 'europe-west1').httpsCallable('transitionOrderStatus').call({
       'order_id': id,
       'status': status,
       'reason': reason ?? '',

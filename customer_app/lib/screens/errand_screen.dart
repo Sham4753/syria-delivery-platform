@@ -45,7 +45,7 @@ class _ErrandPageState extends State<ErrandPage> {
     };
     setState(() => busy = true);
     try {
-      final quote = await FirebaseFunctions.instance
+      final quote = await FirebaseFunctions.instanceFor(region: 'europe-west1')
           .httpsCallable('quoteErrand')
           .call({
             'pickup_address': pickupAddress,
@@ -74,7 +74,7 @@ class _ErrandPageState extends State<ErrandPage> {
         ),
       );
       if (confirmed != true) return;
-      final result = await FirebaseFunctions.instance
+      final result = await FirebaseFunctions.instanceFor(region: 'europe-west1')
           .httpsCallable('createErrand')
           .call({
             'pickup_address': pickupAddress,
