@@ -119,6 +119,7 @@ class _CourierHomeState extends State<CourierHome> {
       if (uid != null)
         await FirebaseFirestore.instance.collection('couriers').doc(uid).set({
           'current_location': GeoPoint(current.latitude, current.longitude),
+          'last_location_at': FieldValue.serverTimestamp(),
           'updated_at': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       if (uid != null) {
@@ -284,13 +285,14 @@ class _PendingOrdersState extends State<PendingOrders> {
       builder: (context, courierSnapshot) {
         final courier = courierSnapshot.data?.data() as Map<String, dynamic>?;
         final zoneId = courier?['zone_id'];
-        if (zoneId == null)
+        if (zoneId == null || widget.uid == null)
           return const Center(child: Text('حدد منطقة المندوب لاستلام الطلبات'));
         return StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance
               .collection('orders')
               .where('zone_id', isEqualTo: zoneId)
               .where('courier_id', isEqualTo: null)
+              .where('dispatch_candidates', arrayContains: widget.uid)
               .where('status', whereIn: ['pending', 'preparing', 'ready_for_pickup'])
               .snapshots(),
           builder: (context, snapshot) {
@@ -334,6 +336,10 @@ class OrderTile extends StatelessWidget {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     await appFunctions.httpsCallable('claimCourierOrder').call({'order_id': id});
+  }
+
+  Future<void> reject() async {
+    await appFunctions.httpsCallable('rejectCourierOrder').call({'order_id': id, 'reason': 'غير مناسب للمندوب'});
   }
 
   Future<void> changeToWallet(BuildContext context) async {
@@ -433,10 +439,10 @@ class OrderTile extends StatelessWidget {
     child: ListTile(
       title: Text('طلب #${id.substring(0, 6)}'),
       subtitle: Text(
-        'الحالة: ${data['status']}\n${data['status'] == 'on_the_way' ? 'اطلب رمز التسليم من العميل قبل الإنهاء' : ''}',
+        'الحالة: ${data['status']}\n${data['dispatch_last_reason'] ?? ''}${data['status'] == 'on_the_way' ? 'اطلب رمز التسليم من العميل قبل الإنهاء' : ''}',
       ),
       trailing: allowClaim
-          ? FilledButton(onPressed: claim, child: const Text('قبول الطلب'))
+          ? Row(mainAxisSize: MainAxisSize.min, children: [IconButton(onPressed: reject, icon: const Icon(Icons.close, color: Colors.red), tooltip: 'رفض العرض'), FilledButton(onPressed: claim, child: const Text('قبول الطلب'))])
           : Row(
               mainAxisSize: MainAxisSize.min,
               children: [

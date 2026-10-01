@@ -6,6 +6,8 @@ const functionsV1 = require('firebase-functions/v1');
 const {HttpsError} = require('firebase-functions/v1/https');
 const FUNCTION_REGION = 'europe-west1';
 const onCall = (handler) => functionsV1.region(FUNCTION_REGION).https.onCall(handler);
+const {onSchedule} = require('firebase-functions/v2/scheduler');
+const onScheduled = (schedule, handler) => onSchedule({region: FUNCTION_REGION, schedule, timeZone: 'Asia/Damascus'}, handler);
 const {initializeApp} = require('firebase-admin/app');
 const {getAuth} = require('firebase-admin/auth');
 const {getFirestore, FieldValue} = require('firebase-admin/firestore');
@@ -17,6 +19,7 @@ const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
 const {bankTransferLedgerEntries, assertPaymentTransition} = require('./financial-ledger');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
+const {OFFER_TTL_MS, rankCouriers, pointOf} = require('./dispatch-engine');
 
 initializeApp();
 const db = getFirestore();
@@ -633,15 +636,79 @@ exports.transitionOrderStatus = onCall(async (data, context) => {
   return result;
 });
 
+function dispatchOfferId(orderId, courierId) {
+  return `${orderId}_${courierId}`;
+}
+
+async function dispatchPickupPoint(order) {
+  if (order.fulfillment_type === 'errand') return pointOf(order.pickup_address);
+  const vendor = order.vendor_id ? ((await db.doc(`vendors/${order.vendor_id}`).get()).data() || {}) : {};
+  return pointOf(vendor.location);
+}
+
+async function offerNextCourier(orderId) {
+  const orderSnap = await db.doc(`orders/${orderId}`).get();
+  if (!orderSnap.exists) return {status: 'missing'};
+  const order = orderSnap.data() || {};
+  if (order.courier_id || ['cancelled', 'delivered', 'returned'].includes(order.status)) return {status: 'closed'};
+  if (order.payment_method === 'bank_transfer' && order.payment_status !== 'paid') return {status: 'payment_pending'};
+  const expiry = order.dispatch_expires_at?.toDate?.()?.getTime?.() || 0;
+  if (order.dispatch_status === 'offered' && expiry > Date.now()) return {status: 'already_offered'};
+  const pickupPoint = await dispatchPickupPoint(order);
+  if (!pickupPoint) return {status: 'missing_pickup_point'};
+  const attempted = new Set(Array.isArray(order.dispatch_attempted_courier_ids) ? order.dispatch_attempted_courier_ids : []);
+  const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get();
+  const eligible = candidates.docs.filter((doc) => !attempted.has(doc.id) && pointOf(doc.data()?.current_location));
+  const enriched = await Promise.all(eligible.map(async (doc) => {
+    const wallet = (await db.doc(`courier_wallets/${doc.id}`).get()).data() || {};
+    if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 100)) return null;
+    const active = await db.collection('orders').where('courier_id', '==', doc.id).where('status', 'in', ['picked_up', 'on_the_way']).limit(3).get();
+    return {id: doc.id, data: () => ({...doc.data(), debt: wallet.debt, credit_limit: wallet.credit_limit, active_orders: active.size})};
+  })).then((entries) => entries.filter(Boolean));
+  const ranked = rankCouriers(enriched, {order, pickupPoint, limit: 3});
+  if (!ranked.length) {
+    await db.doc(`orders/${orderId}`).set({dispatch_status: 'waiting_for_courier', dispatch_last_reason: 'لا يوجد مندوب مؤهل بموقع حديث', updated_at: FieldValue.serverTimestamp()}, {merge: true});
+    return {status: 'no_candidate'};
+  }
+  const expiresAt = new Date(Date.now() + OFFER_TTL_MS); const attempt = Number(order.dispatch_attempt || 0) + 1;
+  const batch = db.batch(); const offerIds = [];
+  for (const candidate of ranked) {
+    const offerId = dispatchOfferId(orderId, candidate.id); offerIds.push(offerId);
+    batch.create(db.doc(`dispatch_offers/${offerId}`), {order_id: orderId, courier_id: candidate.id, vendor_id: order.vendor_id || null, zone_id: order.zone_id, status: 'offered', attempt, score: candidate.breakdown.score, score_breakdown: candidate.breakdown, offered_at: FieldValue.serverTimestamp(), expires_at: expiresAt, updated_at: FieldValue.serverTimestamp()});
+  }
+  const orderRef = db.doc(`orders/${orderId}`);
+  batch.update(orderRef, {dispatch_candidates: ranked.map((candidate) => candidate.id), dispatch_offer_ids: offerIds, dispatch_attempt: attempt, dispatch_attempted_courier_ids: [...attempted, ...ranked.map((candidate) => candidate.id)], dispatch_status: 'offered', dispatch_offered_at: FieldValue.serverTimestamp(), dispatch_expires_at: expiresAt, dispatch_last_reason: ranked[0].breakdown.reason, updated_at: FieldValue.serverTimestamp()});
+  batch.create(orderRef.collection('events').doc(`dispatch_offer_${attempt}`), {from_status: order.status, to_status: order.status, action: 'dispatch_offer', attempt, courier_ids: ranked.map((candidate) => candidate.id), reason: ranked[0].breakdown.reason, created_at: FieldValue.serverTimestamp()});
+  await batch.commit();
+  await Promise.all(ranked.map((candidate) => notifyUser(candidate.id, 'عرض توصيل جديد', `لديك 90 ثانية لقبول الطلب #${orderId.slice(0, 6)}`, {order_id: orderId, dispatch_offer_id: dispatchOfferId(orderId, candidate.id)})));
+  return {status: 'offered', attempt, courier_ids: ranked.map((candidate) => candidate.id)};
+}
+
+exports.rejectCourierOrder = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['courier']);
+  const orderId = String(data?.order_id || '').trim(); const reason = String(data?.reason || 'رفض المندوب').trim().slice(0, 200);
+  if (!orderId) throw new HttpsError('invalid-argument', 'رقم الطلب مطلوب');
+  const offerRef = db.doc(`dispatch_offers/${dispatchOfferId(orderId, context.auth.uid)}`); const orderRef = db.doc(`orders/${orderId}`);
+  await db.runTransaction(async (tx) => {
+    const [offerSnap, orderSnap] = await Promise.all([tx.get(offerRef), tx.get(orderRef)]);
+    if (!offerSnap.exists || !orderSnap.exists || offerSnap.data()?.status !== 'offered') throw new HttpsError('failed-precondition', 'عرض الإسناد غير صالح أو منتهٍ');
+    tx.update(offerRef, {status: 'rejected', rejected_by: context.auth.uid, rejection_reason: reason, responded_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+    tx.update(orderRef, {dispatch_status: 'requeue', dispatch_last_reason: reason, updated_at: FieldValue.serverTimestamp()});
+    tx.create(orderRef.collection('events').doc(), {from_status: orderSnap.data()?.status, to_status: orderSnap.data()?.status, actor_id: context.auth.uid, actor_role: 'courier', action: 'dispatch_rejected', reason, created_at: FieldValue.serverTimestamp()});
+  });
+  return {order_id: orderId, status: 'requeued'};
+});
+
 exports.claimCourierOrder = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const uid = context.auth.uid;
   await requireRole(uid, ['courier']);
   const orderId = String(data?.order_id || '').trim();
   if (!orderId) throw new HttpsError('invalid-argument', 'رقم الطلب مطلوب');
-  const orderRef = db.doc(`orders/${orderId}`); const courierRef = db.doc(`couriers/${uid}`); const walletRef = db.doc(`courier_wallets/${uid}`); const eventRef = orderRef.collection('events').doc();
+  const orderRef = db.doc(`orders/${orderId}`); const courierRef = db.doc(`couriers/${uid}`); const walletRef = db.doc(`courier_wallets/${uid}`); const offerRef = db.doc(`dispatch_offers/${dispatchOfferId(orderId, uid)}`); const eventRef = orderRef.collection('events').doc();
   await db.runTransaction(async (tx) => {
-    const [orderSnap, courierSnap, walletSnap] = await Promise.all([tx.get(orderRef), tx.get(courierRef), tx.get(walletRef)]);
+    const [orderSnap, courierSnap, walletSnap, offerSnap] = await Promise.all([tx.get(orderRef), tx.get(courierRef), tx.get(walletRef), tx.get(offerRef)]);
     const order = orderSnap.data() || {}; const courier = courierSnap.data() || {}; const wallet = walletSnap.data() || {};
     if (!orderSnap.exists || !['pending', 'preparing', 'ready_for_pickup'].includes(order.status) || order.courier_id) throw new HttpsError('failed-precondition', 'الطلب لم يعد متاحاً للإسناد');
     if (courier.is_available !== true || courier.zone_id !== order.zone_id) throw new HttpsError('failed-precondition', 'المندوب غير متاح لهذه المنطقة');
@@ -649,7 +716,10 @@ exports.claimCourierOrder = onCall(async (data, context) => {
     const activeOrders = await db.collection('orders').where('courier_id', '==', uid).where('status', 'in', ['picked_up', 'on_the_way']).limit(3).get();
     if (activeOrders.size >= 2) throw new HttpsError('resource-exhausted', 'وصلت إلى الحد الأقصى للطلبات النشطة');
     if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 0)) throw new HttpsError('failed-precondition', 'تجاوز المندوب حد الائتمان');
-    tx.update(orderRef, {courier_id: uid, dispatch_status: 'accepted', dispatch_accepted_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+    const requiresOffer = Array.isArray(order.dispatch_offer_ids) && order.dispatch_offer_ids.length > 0;
+    if (requiresOffer && (!offerSnap.exists || offerSnap.data()?.status !== 'offered' || (offerSnap.data()?.expires_at?.toDate?.()?.getTime?.() || 0) <= Date.now())) throw new HttpsError('failed-precondition', 'انتهت مهلة عرض الإسناد');
+    if (offerSnap.exists && offerSnap.data()?.status === 'offered') tx.update(offerRef, {status: 'accepted', responded_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+    tx.update(orderRef, {courier_id: uid, dispatch_status: 'accepted', dispatch_offer_id: offerSnap.exists ? offerRef.id : null, dispatch_accepted_at: FieldValue.serverTimestamp(), dispatch_expires_at: null, updated_at: FieldValue.serverTimestamp()});
     tx.create(eventRef, {from_status: order.status, to_status: order.status, actor_id: uid, actor_role: 'courier', action: 'claim', created_at: FieldValue.serverTimestamp()});
   });
   return {order_id: orderId, courier_id: uid};
@@ -906,7 +976,7 @@ exports.overrideDispatch = onCall(async (data, context) => {
     if (!orderSnap.exists) throw new HttpsError('not-found', 'الطلب غير موجود');
     if (!courierSnap.exists || courierSnap.data()?.is_available !== true || courierSnap.data()?.zone_id !== order.zone_id) throw new HttpsError('failed-precondition', 'المندوب غير متاح لهذه المنطقة');
     if (!['pending', 'preparing', 'ready_for_pickup'].includes(order.status) || ['delivered', 'cancelled'].includes(order.status)) throw new HttpsError('failed-precondition', 'لا يمكن إسناد الطلب في حالته الحالية');
-    tx.update(orderRef, {courier_id: courierId, dispatch_status: 'manually_assigned', dispatch_overridden_by: context.auth.uid, dispatch_overridden_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
+    tx.update(orderRef, {courier_id: courierId, dispatch_status: 'manually_assigned', dispatch_expires_at: null, dispatch_overridden_by: context.auth.uid, dispatch_overridden_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
     tx.create(eventRef, {from_status: order.status, to_status: order.status, actor_id: context.auth.uid, actor_role: 'super_admin', action: 'manual_dispatch', courier_id: courierId, created_at: FieldValue.serverTimestamp()});
   });
   await notifyUser(courierId, 'تم إسناد طلب إليك', `طلب جديد #${orderId.slice(0, 6)}`, {order_id: orderId});
@@ -975,17 +1045,32 @@ exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (
 });
 
 exports.dispatchPendingOrder = onDocumentWritten('orders/{orderId}', async (event) => {
-  const snap = event.data?.after; if (!snap?.exists) return; const before = event.data?.before?.data() || {}; const order = snap.data(); const isNew = !event.data?.before?.exists; const paymentJustPaid = before.payment_status !== 'paid' && order.payment_status === 'paid'; if (!isNew && !paymentJustPaid) return; if (order.fulfillment_type === 'pickup') return; if (order.payment_method === 'bank_transfer' && order.payment_status !== 'paid') return;
-  const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get(); if (candidates.empty) return;
-  const vendor = order.vendor_id ? ((await db.doc(`vendors/${order.vendor_id}`).get()).data() || {}) : {};
-  const vendorPoint = order.fulfillment_type === 'errand' ? order.pickup_address : vendor.location;
-  const distance = (a, b) => {
-    if (!a || !b) return Number.MAX_SAFE_INTEGER; const lat = (a.latitude - b.latitude) * Math.PI / 180; const lng = (a.longitude - b.longitude) * Math.PI / 180; const x = Math.sin(lat / 2) ** 2 + Math.cos(a.latitude * Math.PI / 180) * Math.cos(b.latitude * Math.PI / 180) * Math.sin(lng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-  };
-  const located = candidates.docs.filter((doc) => doc.data()?.current_location && vendorPoint); if (!located.length) return;
-  const nearest = located.sort((left, right) => distance(left.data().current_location, vendorPoint) - distance(right.data().current_location, vendorPoint)).slice(0, 3);
-  await snap.ref.update({dispatch_candidates: nearest.map((doc) => doc.id), dispatch_status: 'offered', dispatch_distance_km: distance(nearest[0].data().current_location, vendorPoint), updated_at: FieldValue.serverTimestamp()});
-  await Promise.all(nearest.map((doc) => notifyUser(doc.id, 'طلب توصيل جديد', 'يوجد طلب جديد قريب من منطقتك', {order_id: event.params.orderId})));
+  const snap = event.data?.after; if (!snap?.exists) return;
+  const before = event.data?.before?.data() || {}; const order = snap.data();
+  const isNew = !event.data?.before?.exists; const paymentJustPaid = before.payment_status !== 'paid' && order.payment_status === 'paid';
+  if (!isNew && !paymentJustPaid && before.dispatch_status === order.dispatch_status) return;
+  if (order.fulfillment_type === 'pickup' || (order.payment_method === 'bank_transfer' && order.payment_status !== 'paid')) return;
+  await offerNextCourier(event.params.orderId);
+});
+
+exports.expireDispatchOffers = onScheduled('every 1 minutes', async () => {
+  const now = Date.now(); const pending = await db.collection('orders').where('dispatch_status', '==', 'offered').limit(100).get();
+  for (const doc of pending.docs) {
+    const order = doc.data() || {}; const expiresAt = order.dispatch_expires_at?.toDate?.()?.getTime?.() || 0;
+    if (!expiresAt || expiresAt > now || order.courier_id) continue;
+    const orderRef = doc.ref;
+    const transitioned = await db.runTransaction(async (tx) => {
+      const current = await tx.get(orderRef); const value = current.data() || {};
+      if (!current.exists || value.courier_id || value.dispatch_status !== 'offered' || (value.dispatch_expires_at?.toDate?.()?.getTime?.() || 0) > now) return false;
+      tx.update(orderRef, {dispatch_status: 'requeue', dispatch_last_reason: 'انتهت مهلة قبول الإسناد', dispatch_expires_at: null, updated_at: FieldValue.serverTimestamp()});
+      tx.create(orderRef.collection('events').doc(), {from_status: value.status, to_status: value.status, action: 'dispatch_expired', reason: 'انتهت المهلة', created_at: FieldValue.serverTimestamp()});
+      return true;
+    });
+    if (!transitioned) continue;
+    const offers = await db.collection('dispatch_offers').where('order_id', '==', doc.id).where('status', '==', 'offered').get();
+    const batch = db.batch(); offers.docs.forEach((offer) => batch.update(offer.ref, {status: 'expired', responded_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()}));
+    if (!offers.empty) await batch.commit();
+  }
 });
 
 exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) => {

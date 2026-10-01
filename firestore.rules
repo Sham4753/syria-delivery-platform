@@ -84,7 +84,7 @@ service cloud.firestore {
     match /orders/{orderId} {
       // Client order creation is callable-only: prices, totals, coupons, and stock are server-derived.
       allow create: if false;
-      allow read: if admin() || (signedIn() && (resource.data.customer_id == request.auth.uid || resource.data.courier_id == request.auth.uid || vendorOwner(resource.data.vendor_id) || (role('courier') && resource.data.courier_id == null && resource.data.status in ['pending', 'preparing', 'ready_for_pickup'] && get(/databases/$(database)/documents/couriers/$(request.auth.uid)).data.zone_id == resource.data.zone_id)));
+      allow read: if admin() || (signedIn() && (resource.data.customer_id == request.auth.uid || resource.data.courier_id == request.auth.uid || vendorOwner(resource.data.vendor_id) || (role('courier') && resource.data.courier_id == null && resource.data.status in ['pending', 'preparing', 'ready_for_pickup'] && get(/databases/$(database)/documents/couriers/$(request.auth.uid)).data.zone_id == resource.data.zone_id && (!resource.data.keys().hasAny(['dispatch_candidates']) || resource.data.dispatch_candidates.hasAny([request.auth.uid])))));
       // Customer cancellation is callable-only so refunds, coupons, and audit events cannot be bypassed.
       allow update: if admin();
       allow delete: if admin();
@@ -110,6 +110,10 @@ service cloud.firestore {
       allow update: if admin();
       match /settlements/{settlementId} { allow read: if admin() || (signedIn() && request.auth.uid == courierId); allow write: if false; }
       match /ledger/{entryId} { allow read: if admin() || (signedIn() && request.auth.uid == courierId); allow write: if false; }
+    }
+    match /dispatch_offers/{offerId} {
+      allow read: if admin() || (signedIn() && role('courier') && resource.data.courier_id == request.auth.uid);
+      allow write: if false;
     }
     match /tracking/{orderId} {
       allow read: if admin() || orderParty(orderId);

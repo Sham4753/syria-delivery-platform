@@ -36,7 +36,7 @@
 `zone_id`, `name`, `polygon` (array of `{lat, lng}`), `center` (GeoPoint), `is_active`, `updated_at`.
 
 ### `orders/{orderId}`
-`customer_id`, `vendor_id`, `courier_id` (null until assigned), `zone_id`, `items[]`, `subtotal`, `commission`, `delivery_fee`, `total`, `idempotency_key`, `status` (`pending|preparing|ready_for_pickup|picked_up|on_the_way|delivered|cancelled`), `cancelled_by?` (`customer|vendor|admin`), `cancellation_reason?`, `commission_voided?`, `courier_compensation_due?`, `fulfillment_type` (`delivery|pickup`), `scheduled_for?` (Timestamp), `delivery_address` (snapshot object), `landmark?`, `notes?`, `payment_method` (`cash_on_delivery|bank_transfer|wallet|hybrid`), `payment_status` (`unpaid|pending|paid|failed`), `prep_minutes?`, `prep_started_at?`, `ready_at?`, `created_at`, `updated_at`, `synced`. شاشة KDS تعرض `pending`, `preparing`, `ready_for_pickup`, و`picked_up`. بدء التحضير يكتب `prep_started_at` خادميًا، ولا يغير فريق المطبخ أي حقل مالي.
+`customer_id`, `vendor_id`, `courier_id` (null until assigned), `zone_id`, `items[]`, `subtotal`, `commission`, `delivery_fee`, `total`, `idempotency_key`, `status` (`pending|preparing|ready_for_pickup|picked_up|on_the_way|delivered|cancelled`), `cancelled_by?` (`customer|vendor|admin`), `cancellation_reason?`, `commission_voided?`, `courier_compensation_due?`, `fulfillment_type` (`delivery|pickup`), `scheduled_for?` (Timestamp), `delivery_address` (snapshot object), `landmark?`, `notes?`, `payment_method` (`cash_on_delivery|bank_transfer|wallet|hybrid`), `payment_status` (`unpaid|pending|paid|failed`), `prep_minutes?`, `prep_started_at?`, `ready_at?`, `dispatch_status?` (`offered|accepted|requeue|waiting_for_courier`), `dispatch_candidates?[]`, `dispatch_offer_ids?[]`, `dispatch_attempt?`, `dispatch_attempted_courier_ids?[]`, `dispatch_expires_at?`, `dispatch_last_reason?`, `created_at`, `updated_at`, `synced`. شاشة KDS تعرض `pending`, `preparing`, `ready_for_pickup`, و`picked_up`. بدء التحضير يكتب `prep_started_at` خادميًا، ولا يغير فريق المطبخ أي حقل مالي.
 
 ### أدوار فريق المطعم
 
@@ -53,7 +53,11 @@
 `sender_id`, `sender_role`, `text`, `created_at`, `read_by[]`.
 
 ### `couriers/{courierId}`
-`name`, `phone`, `is_available`, `zone_id`, `current_location?`, `updated_at`.
+`name`, `phone`, `is_available`, `zone_id`, `current_location?`, `last_location_at?`, `updated_at`. يستخدم محرك الإسناد حداثة الموقع كعامل ترتيب؛ الموقع القديم لا يُعامل كمرشح موثوق.
+
+### `dispatch_offers/{orderId_courierId}`
+
+عرض إسناد مستقل وغير قابل للكتابة من التطبيقات: `order_id`, `courier_id`, `vendor_id?`, `zone_id`, `status` (`offered|accepted|rejected|expired`), `attempt`, `score`, `score_breakdown`, `offered_at`, `expires_at`, `responded_at?`, `rejection_reason?`, `updated_at`. مدة العرض الافتراضية 90 ثانية، وبعدها يعاد ترتيب مرشحين جدد.
 
 ### `users/{uid}/addresses/{addressId}`
 `label`, `building`, `floor`, `apartment`, `landmark`, `location` (lat/lng أو GeoPoint), `is_default`, `created_at`.

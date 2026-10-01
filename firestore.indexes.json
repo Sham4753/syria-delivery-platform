@@ -179,6 +179,30 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "zone_id", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "dispatch_candidates", "arrayConfig": "CONTAINS"}
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "dispatch_status", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "dispatch_offers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "order_id", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
     }
   ],
   "fieldOverrides": []
