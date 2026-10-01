@@ -15,6 +15,7 @@ const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
+const {bankTransferLedgerEntries, assertPaymentTransition} = require('./financial-ledger');
 
 initializeApp();
 const db = getFirestore();
@@ -472,6 +473,105 @@ exports.approveSettlement = onCall(async (data, context) => {
   return {settlement_id: settlementId, status: 'approved'};
 });
 
+
+function validateBankTransferReference(value) {
+  const reference = String(value || '').trim();
+  if (!/^[A-Za-z0-9٠-٩._:/-]{4,80}$/.test(reference)) throw new HttpsError('invalid-argument', 'مرجع التحويل غير صالح');
+  return reference;
+}
+
+exports.createBankTransferIntent = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['customer']);
+  const orderId = String(data?.order_id || '').trim();
+  if (!orderId) throw new HttpsError('invalid-argument', 'رقم الطلب مطلوب');
+  const orderRef = db.doc(`orders/${orderId}`);
+  const publicConfigRef = db.doc('public_payment_config/main');
+  const paymentRef = db.collection('payment_intents').doc();
+  let result;
+  await db.runTransaction(async (tx) => {
+    const [orderSnap, configSnap] = await Promise.all([tx.get(orderRef), tx.get(publicConfigRef)]);
+    if (!orderSnap.exists || orderSnap.data()?.customer_id !== context.auth.uid) throw new HttpsError('not-found', 'الطلب غير موجود');
+    const order = orderSnap.data() || {};
+    if (order.payment_method !== 'bank_transfer') throw new HttpsError('failed-precondition', 'الطلب ليس تحويلًا بنكيًا');
+    if (!['pending', 'unpaid', 'failed'].includes(order.payment_status)) throw new HttpsError('failed-precondition', 'لا يمكن إنشاء عملية دفع لهذا الطلب');
+    if (configSnap.data()?.bank_transfer?.enabled !== true) throw new HttpsError('failed-precondition', 'التحويل البنكي غير متاح حاليًا');
+    const existing = await tx.get(db.collection('payment_intents').where('order_id', '==', orderId).where('status', 'in', ['awaiting_customer_action', 'pending_verification']).limit(1));
+    if (!existing.empty) {
+      result = {payment_id: existing.docs[0].id, status: existing.docs[0].data()?.status, reused: true};
+      return;
+    }
+    const amount = money(Number(order.total || 0));
+    if (amount <= 0) throw new HttpsError('failed-precondition', 'مبلغ الطلب غير صالح');
+    tx.create(paymentRef, {order_id: orderId, customer_id: context.auth.uid, method: 'bank_transfer', amount, currency: String(configSnap.data()?.bank_transfer?.currency || 'SYP'), status: 'awaiting_customer_action', created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: 1});
+    tx.update(orderRef, {payment_status: 'pending', payment_intent_id: paymentRef.id, updated_at: FieldValue.serverTimestamp()});
+    result = {payment_id: paymentRef.id, status: 'awaiting_customer_action', reused: false};
+  });
+  return result;
+});
+
+exports.submitBankTransferProof = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['customer']);
+  const paymentId = String(data?.payment_id || '').trim();
+  const reference = validateBankTransferReference(data?.reference);
+  const senderName = String(data?.sender_name || '').trim().slice(0, 120);
+  const note = String(data?.note || '').trim().slice(0, 300);
+  if (!paymentId) throw new HttpsError('invalid-argument', 'رقم عملية الدفع مطلوب');
+  const paymentRef = db.doc(`payment_intents/${paymentId}`);
+  const eventRef = db.collection('payment_events').doc(`submitted_${paymentId}`);
+  await db.runTransaction(async (tx) => {
+    const paymentSnap = await tx.get(paymentRef);
+    if (!paymentSnap.exists || paymentSnap.data()?.customer_id !== context.auth.uid) throw new HttpsError('not-found', 'عملية الدفع غير موجودة');
+    const payment = paymentSnap.data() || {};
+    if (!['awaiting_customer_action', 'pending_verification'].includes(payment.status)) throw new HttpsError('failed-precondition', 'عملية الدفع ليست بانتظار إثبات');
+    if (payment.status === 'pending_verification' && payment.reference === reference) return;
+    try {
+      assertPaymentTransition(payment.status, 'pending_verification');
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
+    tx.update(paymentRef, {status: 'pending_verification', reference, sender_name: senderName, note, submitted_by: context.auth.uid, submitted_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
+    tx.create(eventRef, {payment_id: paymentId, type: 'proof_submitted', actor_id: context.auth.uid, reference, created_at: FieldValue.serverTimestamp()});
+  });
+  return {payment_id: paymentId, status: 'pending_verification'};
+});
+
+exports.reviewBankTransfer = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['super_admin']);
+  const paymentId = String(data?.payment_id || '').trim();
+  const decision = String(data?.decision || '').trim();
+  const reason = String(data?.reason || '').trim().slice(0, 300);
+  if (!paymentId || !['approve', 'reject'].includes(decision)) throw new HttpsError('invalid-argument', 'عملية الدفع والقرار مطلوبان');
+  if (decision === 'reject' && !reason) throw new HttpsError('invalid-argument', 'سبب الرفض مطلوب');
+  const paymentRef = db.doc(`payment_intents/${paymentId}`);
+  const reviewEventRef = db.collection('payment_events').doc(`review_${paymentId}`);
+  await db.runTransaction(async (tx) => {
+    const paymentSnap = await tx.get(paymentRef);
+    if (!paymentSnap.exists) throw new HttpsError('not-found', 'عملية الدفع غير موجودة');
+    const payment = paymentSnap.data() || {};
+    if (payment.status !== 'pending_verification') throw new HttpsError('failed-precondition', 'عملية الدفع ليست بانتظار المراجعة');
+    const orderRef = db.doc(`orders/${payment.order_id}`);
+    const orderSnap = await tx.get(orderRef);
+    if (!orderSnap.exists || orderSnap.data()?.payment_intent_id !== paymentId) throw new HttpsError('failed-precondition', 'الطلب المرتبط غير صالح');
+    const nextStatus = decision === 'approve' ? 'paid' : 'rejected';
+    try {
+      assertPaymentTransition(payment.status, nextStatus);
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
+    tx.update(paymentRef, {status: nextStatus, reviewed_by: context.auth.uid, reviewed_at: FieldValue.serverTimestamp(), review_reason: reason || null, updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
+    tx.update(orderRef, {payment_status: decision === 'approve' ? 'paid' : 'failed', ...(decision === 'approve' ? {paid_at: FieldValue.serverTimestamp()} : {payment_failure_reason: reason}), updated_at: FieldValue.serverTimestamp()});
+    tx.create(reviewEventRef, {payment_id: paymentId, type: decision === 'approve' ? 'approved' : 'rejected', actor_id: context.auth.uid, reason: reason || null, created_at: FieldValue.serverTimestamp()});
+    if (decision === 'approve') {
+      const entries = bankTransferLedgerEntries({paymentId, orderId: payment.order_id, amount: payment.amount, currency: payment.currency, actorId: context.auth.uid});
+      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, created_at: FieldValue.serverTimestamp()});
+    }
+  });
+  return {payment_id: paymentId, status: decision === 'approve' ? 'paid' : 'rejected'};
+});
+
 exports.transitionOrderStatus = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   const orderId = String(data?.order_id || '').trim();
@@ -688,9 +788,11 @@ exports.createOrder = onCall(async (data, context) => {
   const requestedWallet = Number(payload.wallet_amount || 0);
   const requestedPoints = Number(payload.loyalty_points || 0);
   const cashChangeFor = Number(payload.cash_change_for || 0);
-  if (!['cash_on_delivery', 'wallet', 'hybrid'].includes(paymentMethod)) throw new HttpsError('invalid-argument', 'طريقة الدفع غير مدعومة');
+  if (!['cash_on_delivery', 'wallet', 'hybrid', 'bank_transfer'].includes(paymentMethod)) throw new HttpsError('invalid-argument', 'طريقة الدفع غير مدعومة');
+  if (paymentMethod === 'bank_transfer' && (requestedWallet > 0 || requestedPoints > 0)) throw new HttpsError('invalid-argument', 'التحويل البنكي لا يجتمع مع المحفظة أو نقاط الولاء في هذه المرحلة');
   if (![requestedWallet, requestedPoints, cashChangeFor].every((value) => Number.isFinite(value) && value >= 0)) throw new HttpsError('invalid-argument', 'قيم الدفع يجب أن تكون أرقامًا موجبة');
   if (paymentMethod === 'wallet' && cashChangeFor !== 0) throw new HttpsError('invalid-argument', 'الفكة النقدية متاحة فقط للطلبات النقدية');
+  if (paymentMethod === 'bank_transfer' && cashChangeFor !== 0) throw new HttpsError('invalid-argument', 'التحويل البنكي لا يحتاج فكة نقدية');
   const requestFingerprint = createHash('sha256').update(JSON.stringify({vendorId, zoneId, rawItems, address, couponCode, paymentMethod, requestedWallet, requestedPoints, cashChangeFor})).digest('hex');
   const idempotencyRef = db.doc(`order_idempotency/${customerId}_${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`);
   const orderRef = db.collection('orders').doc(); const secretRef = db.doc(`order_secrets/${orderRef.id}`); const deliveryOtp = String(randomInt(100000, 1000000));
@@ -759,7 +861,7 @@ exports.createOrder = onCall(async (data, context) => {
     const walletUsed = paymentMethod === 'cash_on_delivery' ? 0 : Math.min(totalBeforePayment - pointsDiscount, requestedWallet, walletBalance);
     if (paymentMethod === 'wallet' && walletUsed < totalBeforePayment) throw new HttpsError('failed-precondition', 'رصيد المحفظة غير كاف');
     if (requestedPoints > loyaltyBalance) throw new HttpsError('failed-precondition', 'نقاط الولاء غير كافية');
-    const cashDue = Math.max(0, totalBeforePayment - walletUsed - pointsDiscount);
+    const cashDue = paymentMethod === 'bank_transfer' ? 0 : Math.max(0, totalBeforePayment - walletUsed - pointsDiscount);
     if (cashChangeFor > 0 && cashChangeFor < cashDue) throw new HttpsError('invalid-argument', 'الفئة النقدية يجب أن تكون أكبر أو تساوي المبلغ المطلوب');
     // سقف الفكة: من الإعدادات (max_change_amount)، وإلا عشرة أضعاف المبلغ المطلوب. اضبط max_change_amount حسب عملتك.
     const maxChange = Number(config.max_change_amount || 0) > 0 ? Number(config.max_change_amount) : cashDue * 10;
@@ -770,7 +872,7 @@ exports.createOrder = onCall(async (data, context) => {
       customer_id: customerId, vendor_id: vendorId, zone_id: zoneId, items, subtotal, delivery_fee: deliveryFee,
       coupon_code: discount > 0 ? couponCode : null, coupon_applied: discount > 0, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
       idempotency_key: idempotencyKey,
-      status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_status: cashDue === 0 ? 'paid' : 'unpaid', wallet_amount: walletUsed, loyalty_points_used: pointsUsed, cash_due: cashDue, cash_change_for: cashChangeFor,
+      status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_status: paymentMethod === 'bank_transfer' ? 'pending' : (cashDue === 0 ? 'paid' : 'unpaid'), wallet_amount: walletUsed, loyalty_points_used: pointsUsed, cash_due: cashDue, cash_change_for: cashChangeFor,
       delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
       created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
     });
@@ -870,8 +972,8 @@ exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (
   });
 });
 
-exports.dispatchPendingOrder = onDocumentCreated('orders/{orderId}', async (event) => {
-  const snap = event.data; if (!snap) return; const order = snap.data(); if (order.fulfillment_type === 'pickup') return;
+exports.dispatchPendingOrder = onDocumentWritten('orders/{orderId}', async (event) => {
+  const snap = event.data?.after; if (!snap?.exists) return; const before = event.data?.before?.data() || {}; const order = snap.data(); const isNew = !event.data?.before?.exists; const paymentJustPaid = before.payment_status !== 'paid' && order.payment_status === 'paid'; if (!isNew && !paymentJustPaid) return; if (order.fulfillment_type === 'pickup') return; if (order.payment_method === 'bank_transfer' && order.payment_status !== 'paid') return;
   const candidates = await db.collection('couriers').where('zone_id', '==', order.zone_id).where('is_available', '==', true).limit(50).get(); if (candidates.empty) return;
   const vendor = order.vendor_id ? ((await db.doc(`vendors/${order.vendor_id}`).get()).data() || {}) : {};
   const vendorPoint = order.fulfillment_type === 'errand' ? order.pickup_address : vendor.location;

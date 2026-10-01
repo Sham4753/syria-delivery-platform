@@ -67,7 +67,7 @@
 نتيجة إغلاق الوردية: `shift_id`, المالك، `status` (`pending_approval|approved`), `expected_cash`, `counted_cash`, `variance`, `gross_sales`, `delivery_earnings`, `order_count`, `created_by`, `approved_by`, `created_at`, `approved_at`. لا تُعدّل مباشرة؛ الإغلاق أو اعتماد المدير يتم عبر Cloud Functions.
 
 ### `financial_ledger/{entryId}`
-دفتر مالي غير قابل للتعديل من التطبيقات. كل قيد يحمل `type`, `direction`, `amount`, `shift_id?`, `settlement_id?`, `owner_id?`, `actor_id`, و`created_at`. اعتماد التسوية يكتب قيد الفروقات مرة واحدة داخل Transaction.
+دفتر قيود موحّد غير قابل للتعديل من التطبيقات. كل عملية مالية تكتب قيدين متوازنين داخل Transaction، ويحمل القيد `entry_group_id`, `account`, `direction` (`debit|credit`), `amount`, `currency`, `source_type`, `source_id`, `order_id?`, `payment_id?`, `settlement_id?`, `actor_id`, `metadata`, و`created_at`. اعتماد التحويل البنكي اليدوي يثبت زوج `bank_clearing` و`customer_receivable` بمعرفين حتميين. التصحيح مستقبلاً يكون بقيد عكسي، لا بتعديل أو حذف.
 
 ### `coupons/{CODE}`
 `type` (`percentage|fixed_amount|free_delivery`), `value`, `min_order_amount`, `expires_at?`, `usage_limit_total?`, `usage_limit_per_customer`, `used_count`, `is_active`, `source`, `restricted_to_customer?`.
@@ -81,8 +81,14 @@
 ### `support_tickets/{ticketId}`
 `customer_id`, `order_id?`, `subject`, `message`, `status` (`open|in_progress|closed`), `created_at`, `updated_at`.
 
+### `payment_intents/{paymentId}`
+عملية دفع مستقلة عن الطلب. تحتوي `order_id`, `customer_id`, `method` (`bank_transfer`), `amount`, `currency`, `status` (`created|awaiting_customer_action|pending_verification|paid|rejected|failed`), `reference?`, `sender_name?`, `note?`, `submitted_at?`, `reviewed_by?`, `reviewed_at?`, `review_reason?`, `version`, `created_at`, `updated_at`. لا يكتب العميل أو الأدمن مباشرة؛ التعديل عبر الدوال.
+
+### `payment_events/{eventId}`
+سجل غير قابل للتعديل لأحداث العملية (`proof_submitted`, `approved`, `rejected`) مع `payment_id`, `actor_id`, `reference?`, `reason?`, و`created_at`. تستخدم معرفات حتمية للأحداث الحساسة لمنع التكرار.
+
 ### `payments/{paymentId}`
-`order_id`, `customer_id`, `method`, `amount`, `status`, `provider_reference?`, `created_at`, `updated_at`.
+سجل قديم للتوافق فقط. العمليات الجديدة تستخدم `payment_intents` ولا تغيّر `payment_status` مباشرة من التطبيقات.
 
 ### `courier_wallets/{courierId}`
 `balance`, `total_earnings`, `company_commission`, `updated_at`.

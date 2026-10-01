@@ -23,3 +23,18 @@ export function SettlementsPage() {
   const approve = async id => { setBusy(id); try { await httpsCallable(functions, 'approveSettlement')({ settlement_id: id }); notify('تم اعتماد التسوية وكتابة القيد المالي') } catch (error) { notify(error.message || 'تعذر اعتماد التسوية', 'error') } finally { setBusy('') } }
   return <><section className="page-heading"><div><p className="eyebrow">FINANCE / SETTLEMENTS</p><h1>الورديات والتسويات</h1><p>مراجعة فروقات الصندوق واعتمادها قبل تسجيل القيد المالي.</p></div></section><section className="data-card"><table><thead><tr><th>المالك</th><th>الوردية</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.owner_type === 'vendor' ? 'تاجر' : 'مندوب'} / {item.owner_id}</td><td>{item.shift_id}</td><td>{item.expected_cash || 0} ل.س</td><td>{item.counted_cash || 0} ل.س</td><td className={Number(item.variance || 0) < 0 ? 'negative' : ''}>{item.variance || 0} ل.س</td><td><span className={`badge ${item.status === 'approved' ? 'green' : 'blue'}`}>{item.status}</span></td><td>{item.status === 'pending_approval' ? <Button busy={busy === item.id} onClick={() => approve(item.id)}>اعتماد</Button> : 'تم الاعتماد'}</td></tr>)}</tbody></table>{!items.length && <EmptyState>لا توجد تسويات بعد.</EmptyState>}</section><Toast toast={toast} /></>
 }
+
+
+export function BankTransfersPage() {
+  const [items, setItems] = useState([])
+  const [busy, setBusy] = useState('')
+  const { toast, notify } = useToast()
+  useEffect(() => onSnapshot(collection(db, 'payment_intents'), snapshot => setItems(snapshot.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.method === 'bank_transfer').sort((a, b) => (b.created_at?.seconds || 0) - (a.created_at?.seconds || 0))), () => notify('تعذر تحميل التحويلات البنكية', 'error')), [notify])
+  const review = async (item, decision) => {
+    const reason = decision === 'reject' ? window.prompt('اذكر سبب رفض التحويل:') : ''
+    if (decision === 'reject' && !reason?.trim()) return
+    setBusy(item.id)
+    try { await httpsCallable(functions, 'reviewBankTransfer')({ payment_id: item.id, decision, reason: reason?.trim() || '' }); notify(decision === 'approve' ? 'تم اعتماد التحويل وكتابة قيدين متوازنين' : 'تم رفض التحويل مع تسجيل السبب') } catch (error) { notify(error.message || 'تعذرت مراجعة التحويل', 'error') } finally { setBusy('') }
+  }
+  return <><section className="page-heading"><div><p className="eyebrow">FINANCE / BANK TRANSFERS</p><h1>التحويلات البنكية اليدوية</h1><p>لا يصبح الطلب مدفوعًا ولا يدخل التشغيل قبل اعتماد الأدمن للتحويل.</p></div></section><section className="data-card"><table><thead><tr><th>العملية</th><th>الطلب</th><th>المبلغ</th><th>مرجع الحوالة</th><th>الحالة</th><th>المراجعة</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td><strong>#{item.id.slice(0, 8)}</strong><br/><small>{item.customer_id}</small></td><td>{item.order_id}</td><td>{item.amount || 0} {item.currency || 'SYP'}</td><td>{item.reference || 'لم يرسل بعد'}</td><td><span className={`badge ${item.status === 'paid' ? 'green' : item.status === 'rejected' ? 'muted' : 'blue'}`}>{item.status}</span></td><td>{item.status === 'pending_verification' ? <><Button busy={busy === item.id} onClick={() => review(item, 'approve')}>اعتماد</Button> <Button variant="secondary" busy={busy === item.id} onClick={() => review(item, 'reject')}>رفض</Button></> : 'لا إجراء'}</td></tr>)}</tbody></table>{!items.length && <EmptyState>لا توجد عمليات تحويل بنكي.</EmptyState>}</section><Toast toast={toast} /></>
+}

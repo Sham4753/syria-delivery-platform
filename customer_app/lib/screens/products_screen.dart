@@ -89,7 +89,9 @@ class _ProductsPageState extends State<ProductsPage> {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     pendingIdempotencyKey ??= 'order-${DateTime.now().microsecondsSinceEpoch}-$uid';
     final userSnap = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    final choice = await showPaymentSheet(context, total, userSnap.data() ?? {});
+    final paymentConfig = await FirebaseFirestore.instance.collection('public_payment_config').doc('main').get();
+    final bank = (paymentConfig.data()?['bank_transfer'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+    final choice = await showPaymentSheet(context, total, userSnap.data() ?? {}, bankTransferEnabled: bank['enabled'] == true, bankName: '${bank['bank_name'] ?? ''}');
     if (choice == null) return;
     final sourceAddress = address!;
     final selectedLocation = sourceAddress['location'] as GeoPoint?;
@@ -119,12 +121,35 @@ class _ProductsPageState extends State<ProductsPage> {
       }
       if (mounted) {
         setState(() { cart.clear(); pendingIdempotencyKey = null; });
+        if (choice.method == 'bank_transfer') await _submitBankTransfer(submitted.orderId, bank);
         Navigator.push(context, MaterialPageRoute(builder: (_) => OrderPage(orderId: submitted.orderId)));
       }
     } on FirebaseFunctionsException catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'تعذر إنشاء الطلب')));
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر إنشاء الطلب. تحقق من البيانات والاتصال.')));
+    }
+  }
+
+  Future<void> _submitBankTransfer(String orderId, Map<String, dynamic> bank) async {
+    if (!mounted) return;
+    final reference = TextEditingController();
+    final submitted = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+      title: const Text('إثبات التحويل البنكي'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('حوّل إلى ${bank['bank_name'] ?? 'الحساب المعلن'} ثم أدخل مرجع الحوالة. سيبقى الطلب بانتظار مراجعة الأدمن.'),
+        const SizedBox(height: 12),
+        TextField(controller: reference, decoration: const InputDecoration(labelText: 'مرجع الحوالة'), autofocus: true),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('لاحقًا')), FilledButton(onPressed: () => Navigator.pop(dialogContext, reference.text.trim().isNotEmpty), child: const Text('إرسال'))],
+    ));
+    if (submitted != true || reference.text.trim().isEmpty) return;
+    try {
+      final intent = await appFunctions.httpsCallable('createBankTransferIntent').call({'order_id': orderId});
+      await appFunctions.httpsCallable('submitBankTransferProof').call({'payment_id': intent.data['payment_id'], 'reference': reference.text.trim()});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال التحويل للمراجعة')));
+    } on FirebaseFunctionsException catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'تعذر إرسال إثبات التحويل')));
     }
   }
 

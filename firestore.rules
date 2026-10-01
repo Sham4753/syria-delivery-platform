@@ -31,6 +31,8 @@ service cloud.firestore {
     match /payment_config/{configId} { allow read: if admin(); allow write: if false; }
     match /public_payment_config/{configId} { allow read: if configId == 'main'; allow write: if false; }
     match /payment_config_revisions/{revisionId} { allow read: if admin(); allow write: if false; }
+    match /payment_intents/{paymentId} { allow read: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid); allow write: if false; }
+    match /payment_events/{eventId} { allow read: if admin() || (signedIn() && get(/databases/$(database)/documents/payment_intents/$(resource.data.payment_id)).data.customer_id == request.auth.uid); allow write: if false; }
     match /shifts/{shiftId} { allow read: if ownerOf(resource.data.owner_type, resource.data.owner_id, resource.data.vendor_id); allow write: if false; }
     match /active_shifts/{activeId} { allow read: if admin() || (signedIn() && (resource.data.owner_id == request.auth.uid || vendorOwner(resource.data.owner_id))); allow write: if false; }
     match /settlements/{settlementId} { allow read: if ownerOf(resource.data.owner_type, resource.data.owner_id, resource.data.vendor_id); allow write: if false; }

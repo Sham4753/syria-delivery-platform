@@ -93,7 +93,7 @@ class PaymentChoice {
   const PaymentChoice(this.method, this.walletAmount, this.loyaltyPoints, this.cashChangeFor);
 }
 
-Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<String, dynamic> user) async {
+Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<String, dynamic> user, {bool bankTransferEnabled = false, String bankName = ''}) async {
   String method = 'cash_on_delivery';
   num wallet = 0;
   num points = 0;
@@ -112,6 +112,7 @@ Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<Str
           if (method == 'cash_on_delivery') TextField(decoration: const InputDecoration(labelText: 'الفئة النقدية'), keyboardType: TextInputType.number, onChanged: (value) => cashChange = num.tryParse(value) ?? 0),
           RadioListTile<String>(value: 'wallet', groupValue: method, onChanged: balance >= total ? (String? value) => setState(() { method = value ?? method; wallet = total; }) : null, title: Text('المحفظة — $balance ل.س')),
           RadioListTile<String>(value: 'hybrid', groupValue: method, onChanged: balance > 0 || loyalty > 0 ? (String? value) => setState(() => method = value ?? method) : null, title: const Text('دفع جزئي + كاش')),
+          if (bankTransferEnabled) RadioListTile<String>(value: 'bank_transfer', groupValue: method, onChanged: (String? value) => setState(() { method = value ?? method; wallet = 0; points = 0; cashChange = 0; }), title: Text('تحويل بنكي${bankName.isEmpty ? '' : ' — $bankName'}')),
           if (method == 'hybrid') Row(children: [
             Expanded(child: TextField(decoration: const InputDecoration(labelText: 'من المحفظة'), keyboardType: TextInputType.number, onChanged: (value) => wallet = num.tryParse(value) ?? 0)),
             const SizedBox(width: 10),
