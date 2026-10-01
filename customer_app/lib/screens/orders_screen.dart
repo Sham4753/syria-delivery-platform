@@ -27,7 +27,7 @@ class _OrderPageState extends State<OrderPage> {
           ),
           FilledButton(
             onPressed: () async {
-              await FirebaseFunctions.instance.httpsCallable('cancelOrder').call({
+              await FirebaseFunctions.instanceFor(region: 'europe-west1').httpsCallable('cancelOrder').call({
                 'order_id': widget.orderId,
                 'reason': reason.text.trim(),
               });

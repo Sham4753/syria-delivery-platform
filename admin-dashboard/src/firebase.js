@@ -35,7 +35,7 @@ try {
 export const firebaseInitError = initializationError
 export const auth = app ? getAuth(app) : null
 export const db = app ? getFirestore(app) : null
-export const functions = app ? getFunctions(app) : null
+export const functions = app ? getFunctions(app, 'europe-west1') : null
 export const storage = app ? getStorage(app) : null
 
 if (useEmulators && auth && db && functions) {

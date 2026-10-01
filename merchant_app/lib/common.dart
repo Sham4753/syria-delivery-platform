@@ -15,7 +15,7 @@ export 'package:flutter/material.dart';
 bool merchantIsOpen(Map<String, dynamic> data) {
   final hours = data['opening_hours'] as Map<String, dynamic>?;
   if (hours == null) return true;
-  final now = TimeOfDay.now();
+  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
   final current = now.hour * 60 + now.minute;
   int parse(String value) {
     final p = value.split(':');
@@ -23,8 +23,11 @@ bool merchantIsOpen(Map<String, dynamic> data) {
   }
 
   try {
-    return current >= parse(hours['open'] ?? '00:00') &&
-        current <= parse(hours['close'] ?? '23:59');
+    final opening = parse(hours['open'] ?? '00:00');
+    final closing = parse(hours['close'] ?? '23:59');
+    return opening <= closing
+        ? current >= opening && current <= closing
+        : current >= opening || current <= closing;
   } catch (_) {
     return true;
   }
@@ -67,5 +70,5 @@ Future<void> connectToFirebaseEmulators() async {
   final host = emulatorHost();
   await FirebaseAuth.instance.useAuthEmulator(host, 9099);
   FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
-  FirebaseFunctions.instance.useFunctionsEmulator(host, 5001);
+  FirebaseFunctions.instanceFor(region: 'europe-west1').useFunctionsEmulator(host, 5001);
 }

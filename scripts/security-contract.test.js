@@ -59,7 +59,7 @@ assert(/request\.resource\.data\.keys\(\)\.hasOnly/.test(rules), 'user creation 
 assert(/match \/public_vendors\/{vendorId}/.test(rules), 'public vendor projection rule must exist');
 assert(/match \/system_config\/{configId} \{ allow read: if admin\(\);/.test(rules) && /match \/public_config\/{configId} \{ allow read: if configId == 'main';/.test(rules), 'private config must be admin-only and public projection limited to main');
 assert(/allow read: if resource\.data\.is_available == true \|\| admin\(\) \|\| vendorOwner\(vendorId\)/.test(rules), 'available products must be browsable by guests');
-assert(/match \/wallet_topups\/{topupId} \{ allow read: if signedIn\(\) && resource\.data\.customer_id == request\.auth\.uid; allow create: if false;/.test(rules), 'wallet topups must be callable-only');
+assert(/match \/wallet_topups\/{topupId} \{ allow read: if admin\(\) \|\| \(signedIn\(\) && resource\.data\.customer_id == request\.auth\.uid\); allow create, update, delete: if false;/.test(rules), 'wallet topups must be callable-only');
 assert(/role\('customer'\).*request\.resource\.data\.customer_id == request\.auth\.uid/.test(rules), 'ratings must be created by customers only');
 assert(/collection\('public_vendors'\)/.test(customer), 'customer must read sanitized public vendor catalog');
 assert(!/defaultValue: true/.test(customer.match(/const useFirebaseEmulators[\s\S]{0,160}/)?.[0] || ''), 'production must not default to Firebase emulators');
