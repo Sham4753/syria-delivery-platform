@@ -14,6 +14,7 @@ const {createHash, randomInt} = require('crypto');
 const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
+const {courierDebtForDeliveredOrder} = require('./courier-settlement');
 
 initializeApp();
 const db = getFirestore();
@@ -776,7 +777,7 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
     const admin = await db.collection('users').where('vendor_id', '==', after.vendor_id).where('role', '==', 'vendor_admin').limit(1).get(); if (!admin.empty) await notifyUser(admin.docs[0].id, 'تحديث طلب المتجر', body, {order_id: event.params.orderId});
   }
   if (statusChanged && after.status === 'delivered' && after.courier_id) {
-    const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = Math.max(0, Number(after.subtotal || 0)); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
+    const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = courierDebtForDeliveredOrder(after); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
       const existing = await tx.get(eventRef); if (existing.exists) return; tx.set(walletRef, {debt: FieldValue.increment(debt), total_earnings: FieldValue.increment(earnings), balance: FieldValue.increment(earnings), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(eventRef, {type: 'delivery', order_id: event.params.orderId, debt, earnings, created_at: FieldValue.serverTimestamp()});
     }); const customerRef = db.doc(`users/${after.customer_id}`); const loyaltyRef = customerRef.collection('loyalty_ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
       const existing = await tx.get(loyaltyRef); if (existing.exists) return; const points = Math.floor(Math.max(0, Number(after.subtotal || 0) - Number(after.discount_amount || 0)) / Math.max(1, Number((await db.doc('system_config/main').get()).data()?.loyalty_points_divisor || 1000)) * Number((await db.doc('system_config/main').get()).data()?.loyalty_points_rate || 0)); tx.set(customerRef, {loyalty_points: FieldValue.increment(points), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(loyaltyRef, {points, order_id: event.params.orderId, created_at: FieldValue.serverTimestamp()});
