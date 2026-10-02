@@ -18,6 +18,7 @@ class _ProductsPageState extends State<ProductsPage> {
   String? couponCode;
   String? pendingIdempotencyKey;
   num discount = 0;
+  num deliveryFeePreview = 0;
   num get subtotal => cart.values.fold<num>(0, (sum, item) => sum + (item['price'] ?? 0) * (item['quantity'] ?? 1));
 
   Future<bool> ensureSignedIn() async {
@@ -49,6 +50,9 @@ class _ProductsPageState extends State<ProductsPage> {
     final key = '$id-${selected.map((m) => m['name']).join('-')}';
     final extra = selected.fold<num>(0, (sum, m) => sum + (m['price'] ?? 0));
     setState(() {
+      couponCode = null;
+      discount = 0;
+      deliveryFeePreview = 0;
       final existing = cart[key];
       cart[key] = {
         ...data,
@@ -69,14 +73,25 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> applyCoupon() async {
     if (!await ensureSignedIn()) return;
     final value = coupon.text.trim().toUpperCase();
-    if (value.isEmpty) return;
-    final snap = await FirebaseFirestore.instance.collection('coupons').doc(value).get();
-    final data = snap.data();
-    if (!snap.exists || data?['is_active'] != true || subtotal < (data?['min_order_amount'] ?? 0)) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الكوبون غير صالح')));
-      return;
+    if (value.isEmpty || subtotal <= 0) return;
+    try {
+      final result = await appFunctions.httpsCallable('validateCoupon').call({
+        'coupon_code': value,
+        'vendor_id': widget.vendorId,
+        'zone_id': widget.zoneId,
+        'subtotal': subtotal,
+      });
+      final data = Map<String, dynamic>.from(result.data as Map);
+      if (!mounted) return;
+      setState(() {
+        couponCode = data['code'] as String? ?? value;
+        discount = num.tryParse('${data['discount'] ?? 0}') ?? 0;
+        deliveryFeePreview = num.tryParse('${data['delivery_fee'] ?? 0}') ?? 0;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم تطبيق الكوبون — الخصم $discount ل.س')));
+    } on FirebaseFunctionsException catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'الكوبون غير صالح')));
     }
-    setState(() { couponCode = value; discount = data?['type'] == 'percentage' ? subtotal * ((data?['value'] ?? 0) / 100) : (data?['value'] ?? 0); });
   }
 
   Future<void> checkout() async {
@@ -85,7 +100,7 @@ class _ProductsPageState extends State<ProductsPage> {
       if (!mounted || FirebaseAuth.instance.currentUser == null) return;
     }
     if (address == null) { await selectAddress(); if (address == null) return; }
-    final total = (subtotal - discount).clamp(0, double.infinity);
+    final total = (subtotal + deliveryFeePreview - discount).clamp(0, double.infinity);
     final uid = FirebaseAuth.instance.currentUser!.uid;
     pendingIdempotencyKey ??= 'order-${DateTime.now().microsecondsSinceEpoch}-$uid';
     final userSnap = await FirebaseFirestore.instance.collection('users').doc(uid).get();

@@ -138,6 +138,33 @@ function couponDiscount(coupon, subtotal, deliveryFee) {
   return 0;
 }
 
+exports.validateCoupon = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const customerId = context.auth.uid;
+  const code = String(data?.coupon_code || '').trim().toUpperCase();
+  const vendorId = String(data?.vendor_id || '').trim();
+  const zoneId = String(data?.zone_id || '').trim();
+  const subtotal = Number(data?.subtotal || 0);
+  if (!code || !vendorId || !zoneId || !Number.isFinite(subtotal) || subtotal < 0) {
+    throw new HttpsError('invalid-argument', 'بيانات الكوبون غير مكتملة');
+  }
+  const [couponSnap, vendorSnap, zoneSnap, configSnap, userSnap] = await Promise.all([
+    db.doc(`coupons/${code}`).get(), db.doc(`vendors/${vendorId}`).get(), db.doc(`zones/${zoneId}`).get(), db.doc('system_config/main').get(), db.doc(`users/${customerId}`).get(),
+  ]);
+  const coupon = couponSnap.data() || {};
+  const now = Date.now();
+  const expires = coupon.expires_at?.toMillis?.() || null;
+  const redemption = await db.doc(`coupons/${code}/redemptions/${customerId}`).get();
+  const config = configSnap.data() || {};
+  const zoneMultiplier = Number(zoneSnap.data()?.surge_multiplier || 1);
+  const globalMultiplier = config.surge_enabled === true ? Number(config.surge_multiplier || 1) : 1;
+  const freeDelivery = Array.isArray(config.free_delivery_vendor_ids) && config.free_delivery_vendor_ids.includes(vendorId);
+  const deliveryFee = money(freeDelivery ? 0 : Number(zoneSnap.data()?.delivery_fee_base || config.default_delivery_fee || 0) * zoneMultiplier * globalMultiplier);
+  const valid = couponSnap.exists && coupon.is_active === true && (!expires || expires > now) && subtotal >= Number(coupon.min_order_amount || 0) && (!coupon.usage_limit_total || Number(coupon.used_count || 0) < Number(coupon.usage_limit_total)) && (!coupon.usage_limit_per_customer || !redemption.exists) && (!coupon.restricted_to_customer || coupon.restricted_to_customer === customerId) && vendorSnap.exists && zoneSnap.exists && userSnap.exists;
+  if (!valid) throw new HttpsError('failed-precondition', 'كود الخصم غير صالح أو منتهي');
+  return {code, type: coupon.type || 'percentage', value: Number(coupon.value || 0), discount: money(couponDiscount(coupon, subtotal, deliveryFee)), delivery_fee: deliveryFee, expires_at: expires ? new Date(expires).toISOString() : null};
+});
+
 exports.createStaffAccount = onCall(async (data, context) => {
   const caller = context.auth;
   if (!caller) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');

@@ -78,6 +78,21 @@ class CustomerWalletPage extends StatelessWidget {
                 }).toList());
               },
             ),
+            const SizedBox(height: 18),
+            const Text('سجل نقاط الولاء', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            StreamBuilder<QuerySnapshot>(
+              stream: user.collection('loyalty_ledger').orderBy('created_at', descending: true).limit(30).snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                if (snapshot.data!.docs.isEmpty) return const Padding(padding: EdgeInsets.all(24), child: Text('ستظهر هنا النقاط المكتسبة والمستبدلة'));
+                return Column(children: snapshot.data!.docs.map((doc) {
+                  final item = doc.data() as Map<String, dynamic>;
+                  final pointsValue = item['points'] ?? 0;
+                  final direction = item['direction'] == 'debit' ? '-' : '+';
+                  return ListTile(leading: Icon(item['direction'] == 'debit' ? Icons.redeem : Icons.stars, color: Colors.amber.shade800), title: Text(item['label'] ?? 'حركة نقاط'), trailing: Text('$direction$pointsValue نقطة'));
+                }).toList());
+              },
+            ),
           ]);
         },
       ),
