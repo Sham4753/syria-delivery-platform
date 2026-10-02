@@ -555,6 +555,21 @@ class _MerchantHomeState extends State<MerchantHome> {
         ),
       );
 
+  Widget _ratingSummary() => StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('ratings').where('vendor_id', isEqualTo: widget.vendorId).limit(50).snapshots(),
+        builder: (context, snapshot) {
+          final docs = snapshot.data?.docs ?? [];
+          final values = docs.map((doc) => ((doc.data() as Map<String, dynamic>)['vendor_rating'] as num?)?.toDouble() ?? 0).where((value) => value > 0).toList();
+          final average = values.isEmpty ? 0 : values.reduce((a, b) => a + b) / values.length;
+          return Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('تقييمات العملاء', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Row(children: [Icon(Icons.star, color: Colors.amber.shade700), const SizedBox(width: 6), Text('${average.toStringAsFixed(1)} / 5 — ${values.length} تقييم')]),
+            ...docs.take(3).map((doc) { final item = doc.data() as Map<String, dynamic>; return ListTile(contentPadding: EdgeInsets.zero, dense: true, title: Text('المتجر: ${item['vendor_rating'] ?? 0} نجوم  •  السائق: ${item['courier_rating'] ?? '—'}'), subtitle: Text('${item['comment'] ?? 'بدون ملاحظة'}')); }),
+          ])));
+        },
+      );
+
   Widget _reports() => FutureBuilder<Map<String, dynamic>>(
         future: _loadReports(),
         builder: (context, snapshot) {
@@ -587,6 +602,7 @@ class _MerchantHomeState extends State<MerchantHome> {
               children: [
                 Text('تقرير ${data['date'] ?? _reportDate()}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
+                _ratingSummary(),
                 Text('${data['orders_count'] ?? 0} طلبًا مُسلّمًا اليوم', style: TextStyle(color: Colors.blueGrey.shade700)),
                 const SizedBox(height: 12),
                 _reportMetric('إجمالي المبيعات', data['gross_sales'] ?? 0),

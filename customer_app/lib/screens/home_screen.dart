@@ -255,6 +255,8 @@ class _HomePageState extends State<HomePage> {
                         final status = freeDeliveryVendors.contains(vendorId)
                             ? ' — توصيل مجاني'
                             : '';
+                        final rating = (data['rating_average'] as num?)?.toDouble() ?? 0;
+                        final ratingCount = (data['rating_count'] as num?)?.toInt() ?? 0;
                         return Card(
                           child: InkWell(
                             borderRadius: BorderRadius.circular(20),
@@ -321,6 +323,11 @@ class _HomePageState extends State<HomePage> {
                                             fontSize: 12,
                                           ),
                                         ),
+                                        if (ratingCount > 0)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Text('★ ${rating.toStringAsFixed(1)} ($ratingCount)', style: TextStyle(color: Colors.amber.shade800, fontSize: 12, fontWeight: FontWeight.w600)),
+                                          ),
                                         if (status.isNotEmpty || !open)
                                           Padding(
                                             padding: const EdgeInsets.only(

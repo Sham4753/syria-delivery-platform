@@ -270,6 +270,7 @@ class _CourierHomeState extends State<CourierHome> {
             ),
           ),
           WalletSummary(uid: uid),
+          CourierRatingSummary(uid: uid),
           PendingOrders(uid: uid),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
@@ -314,6 +315,27 @@ class _CourierHomeState extends State<CourierHome> {
       ),
     );
   }
+}
+
+class CourierRatingSummary extends StatelessWidget {
+  final String? uid;
+  const CourierRatingSummary({super.key, required this.uid});
+  @override
+  Widget build(BuildContext context) {
+    if (uid == null) return const SizedBox.shrink();
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('couriers').doc(uid).snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data() as Map<String, dynamic>? ?? {};
+        final average = NumberFormatHelper.number(data['rating_average']);
+        return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), child: ListTile(leading: Icon(Icons.star, color: Colors.amber.shade700), title: const Text('تقييمك'), subtitle: Text('${average.toStringAsFixed(1)} / 5 — ${data['rating_count'] ?? 0} تقييم'), trailing: const Icon(Icons.verified)));
+      },
+    );
+  }
+}
+
+class NumberFormatHelper {
+  static double number(Object? value) => (value as num?)?.toDouble() ?? 0;
 }
 
 class PendingOrders extends StatefulWidget {

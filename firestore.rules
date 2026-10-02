@@ -63,15 +63,9 @@ service cloud.firestore {
       match /redemptions/{orderId} { allow read: if admin(); allow write: if false; }
     }
     match /ratings/{ratingId} {
+      // التقييمات تُحفظ عبر submitRating فقط حتى تُتحقق الحالة وتُحدّث المتوسطات ذريًا.
       allow read: if admin() || (signedIn() && orderParty(resource.data.order_id));
-      allow create: if signedIn() && role('customer') && ratingId == request.resource.data.order_id && request.resource.data.customer_id == request.auth.uid
-        && get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.customer_id == request.auth.uid
-        && get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.status == 'delivered'
-        && request.resource.data.vendor_id == get(/databases/$(database)/documents/orders/$(request.resource.data.order_id)).data.vendor_id
-        && request.resource.data.keys().hasOnly(['order_id', 'customer_id', 'vendor_id', 'courier_id', 'vendor_rating', 'courier_rating', 'comment', 'created_at']);
-      allow update: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vendor_rating', 'courier_rating', 'comment', 'updated_at']));
-      allow delete: if admin() || (signedIn() && resource.data.customer_id == request.auth.uid);
+      allow create, update, delete: if false;
     }
     match /support_tickets/{ticketId} {
       allow create, update, delete: if false;

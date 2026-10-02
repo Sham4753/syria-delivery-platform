@@ -87,6 +87,8 @@ function publicVendorProjection(vendor = {}) {
     is_busy: vendor.is_busy === true,
     address: String(vendor.address || '').trim(),
     phone: String(vendor.phone || '').trim(),
+    rating_average: Number(vendor.rating_average || 0),
+    rating_count: Number(vendor.rating_count || 0),
     ...(openingHours ? {opening_hours: openingHours} : {}),
     updated_at: FieldValue.serverTimestamp(),
   };
@@ -1187,6 +1189,40 @@ exports.overrideDispatch = onCall(async (data, context) => {
   });
   await notifyUser(courierId, 'تم إسناد طلب إليك', `طلب جديد #${orderId.slice(0, 6)}`, {order_id: orderId});
   return {order_id: orderId, courier_id: courierId};
+});
+
+exports.submitRating = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const customerId = context.auth.uid;
+  const orderId = String(data?.order_id || '').trim();
+  const vendorRating = Number(data?.vendor_rating);
+  const courierRaw = data?.courier_rating;
+  const courierRating = courierRaw === null || courierRaw === undefined || courierRaw === '' ? null : Number(courierRaw);
+  const comment = String(data?.comment || '').trim().slice(0, 500);
+  if (!orderId || !Number.isInteger(vendorRating) || vendorRating < 1 || vendorRating > 5 || (courierRating !== null && (!Number.isInteger(courierRating) || courierRating < 1 || courierRating > 5))) {
+    throw new HttpsError('invalid-argument', 'التقييم يجب أن يكون بين نجمة و5 نجوم');
+  }
+  const orderRef = db.doc(`orders/${orderId}`); const ratingRef = db.doc(`ratings/${orderId}`);
+  await db.runTransaction(async (tx) => {
+    const [orderSnap, ratingSnap] = await Promise.all([tx.get(orderRef), tx.get(ratingRef)]);
+    const order = orderSnap.data() || {}; const previous = ratingSnap.data() || {};
+    if (!orderSnap.exists || order.customer_id !== customerId || order.status !== 'delivered') throw new HttpsError('failed-precondition', 'يمكن تقييم الطلب بعد تسليمه فقط');
+    if (!order.vendor_id) throw new HttpsError('failed-precondition', 'الطلب لا يحتوي على متجر');
+    if (courierRating !== null && !order.courier_id) throw new HttpsError('invalid-argument', 'لا يوجد سائق لتقييمه في هذا الطلب');
+    const vendorRef = db.doc(`vendors/${order.vendor_id}`); const courierRef = order.courier_id ? db.doc(`couriers/${order.courier_id}`) : null;
+    const [vendorSnap, courierSnap] = await Promise.all([tx.get(vendorRef), courierRef ? tx.get(courierRef) : Promise.resolve(null)]);
+    if (!vendorSnap.exists || (courierRef && !courierSnap.exists)) throw new HttpsError('not-found', 'المتجر أو السائق غير موجود');
+    const previousVendor = ratingSnap.exists ? Number(previous.vendor_rating || 0) : 0;
+    const vendorData = vendorSnap.data() || {}; const vendorCount = Math.max(0, Number(vendorData.rating_count || 0) - (previousVendor ? 1 : 0) + 1); const vendorSum = Math.max(0, Number(vendorData.rating_sum || 0) - previousVendor + vendorRating);
+    tx.set(vendorRef, {rating_sum: vendorSum, rating_count: vendorCount, rating_average: money(vendorSum / vendorCount), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+    if (courierRef && courierRating !== null) {
+      const previousCourier = ratingSnap.exists ? Number(previous.courier_rating || 0) : 0;
+      const courierData = courierSnap.data() || {}; const courierCount = Math.max(0, Number(courierData.rating_count || 0) - (previousCourier ? 1 : 0) + 1); const courierSum = Math.max(0, Number(courierData.rating_sum || 0) - previousCourier + courierRating);
+      tx.set(courierRef, {rating_sum: courierSum, rating_count: courierCount, rating_average: money(courierSum / courierCount), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+    }
+    tx.set(ratingRef, {order_id: orderId, customer_id: customerId, vendor_id: order.vendor_id, courier_id: order.courier_id || null, vendor_rating: vendorRating, ...(courierRating !== null ? {courier_rating: courierRating} : (previous.courier_rating ? {courier_rating: previous.courier_rating} : {})), comment: comment || null, created_at: previous.created_at || FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+  });
+  return {order_id: orderId, status: 'saved'};
 });
 
 exports.initializeCustomerReferral = onDocumentCreated('users/{uid}', async (event) => {

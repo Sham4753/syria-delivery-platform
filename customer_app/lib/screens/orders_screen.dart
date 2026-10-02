@@ -122,6 +122,12 @@ class _OrderPageState extends State<OrderPage> {
                         )
                       : null,
                 ),
+                if (data?['status'] == 'delivered')
+                  RatingEditor(
+                    orderId: widget.orderId,
+                    vendorId: '${data?['vendor_id'] ?? ''}',
+                    courierId: data?['courier_id']?.toString(),
+                  ),
                 if (data?['status'] == 'on_the_way' ||
                     data?['status'] == 'picked_up')
                   FutureBuilder<DocumentSnapshot>(
@@ -348,5 +354,93 @@ class OrdersHistoryPage extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+
+class RatingEditor extends StatefulWidget {
+  final String orderId;
+  final String vendorId;
+  final String? courierId;
+  const RatingEditor({super.key, required this.orderId, required this.vendorId, this.courierId});
+  @override State<RatingEditor> createState() => _RatingEditorState();
+}
+
+class _RatingEditorState extends State<RatingEditor> {
+  int vendorRating = 0;
+  int courierRating = 0;
+  bool loading = true;
+  bool saving = false;
+  final comment = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final snapshot = await FirebaseFirestore.instance.collection('ratings').doc(widget.orderId).get();
+    final data = snapshot.data() as Map<String, dynamic>?;
+    if (!mounted) return;
+    setState(() {
+      vendorRating = (data?['vendor_rating'] as num?)?.toInt() ?? 0;
+      courierRating = (data?['courier_rating'] as num?)?.toInt() ?? 0;
+      comment.text = '${data?['comment'] ?? ''}';
+      loading = false;
+    });
+  }
+
+  Widget _stars(String label, int value, ValueChanged<int> onChanged) => Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(children: [
+          SizedBox(width: 105, child: Text(label)),
+          ...List.generate(5, (index) => IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onChanged(index + 1),
+                icon: Icon(index < value ? Icons.star : Icons.star_border, color: Colors.amber.shade700),
+              )),
+        ]),
+      );
+
+  Future<void> _save() async {
+    if (vendorRating == 0 || saving) return;
+    setState(() => saving = true);
+    try {
+      await appFunctions.httpsCallable('submitRating').call({
+        'order_id': widget.orderId,
+        'vendor_rating': vendorRating,
+        if (widget.courierId != null && courierRating > 0) 'courier_rating': courierRating,
+        'comment': comment.text.trim(),
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ التقييم، شكرًا لملاحظتك')));
+    } on FirebaseFunctionsException catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'تعذر حفظ التقييم')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return const Card(child: Padding(padding: EdgeInsets.all(14), child: LinearProgressIndicator()));
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(vendorRating == 0 ? 'قيّم تجربتك' : 'تعديل التقييم', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+          _stars('المتجر', vendorRating, (value) => setState(() => vendorRating = value)),
+          if (widget.courierId != null) _stars('السائق', courierRating, (value) => setState(() => courierRating = value)),
+          TextField(controller: comment, maxLength: 500, decoration: const InputDecoration(labelText: 'ملاحظة اختيارية')),
+          Align(alignment: AlignmentDirectional.centerEnd, child: FilledButton(onPressed: vendorRating == 0 || saving ? null : _save, child: Text(saving ? 'جارٍ الحفظ…' : 'حفظ التقييم'))),
+        ]),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    comment.dispose();
+    super.dispose();
   }
 }
