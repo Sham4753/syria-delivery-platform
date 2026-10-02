@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
 import '../common.dart';
 import 'home_screen.dart';
+import 'legal_screen.dart';
 
 const _resendCooldownSeconds = 60;
 
@@ -265,6 +266,10 @@ class _LoginPageState extends State<LoginPage> {
       const Divider(height: 30),
       OutlinedButton.icon(onPressed: busy ? null : () => social(GoogleAuthProvider()), icon: const Icon(Icons.g_mobiledata), label: const Text('المتابعة بواسطة Google')),
       OutlinedButton.icon(onPressed: busy ? null : () => social(FacebookAuthProvider()), icon: const Icon(Icons.facebook), label: const Text('المتابعة بواسطة Facebook')),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LegalScreen(title: 'سياسة الخصوصية', content: LegalScreen.privacy))), child: const Text('الخصوصية')),
+        TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LegalScreen(title: 'شروط الاستخدام', content: LegalScreen.terms))), child: const Text('الشروط')),
+      ]),
       TextButton(onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage())), child: const Text('المتابعة كزائر — تصفح وأضف للسلة')),
     ]))));
   }

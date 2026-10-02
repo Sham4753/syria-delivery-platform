@@ -66,8 +66,10 @@ async function aggregateMerchantReports({db, vendorId, date}) {
   const {start, end} = dayBounds(date);
   const orderSnap = await db.collection('orders')
     .where('vendor_id', '==', vendorId)
-    .where('created_at', '>=', start)
-    .where('created_at', '<=', end)
+    .where('status', '==', 'delivered')
+    .where('delivered_at', '>=', start)
+    .where('delivered_at', '<=', end)
+    .orderBy('delivered_at')
     .limit(1000)
     .get();
   const report = aggregateOrders(orderSnap.docs);

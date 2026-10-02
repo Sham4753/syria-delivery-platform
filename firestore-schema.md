@@ -125,7 +125,7 @@ Flutter enables Firestore local persistence and uses cached snapshots while offl
 
 ## Recommended indexes
 
-`vendors`: `zone_id ASC, category ASC, is_active ASC`; `orders`: `customer_id ASC, created_at DESC`; `orders`: `courier_id ASC, status ASC`; `orders`: `vendor_id ASC, created_at DESC`; `tracking`: `updated_at DESC`; messages: `created_at ASC`.
+`vendors`: `zone_id ASC, category ASC, is_active ASC`; `orders`: `customer_id ASC, created_at DESC`; `orders`: `courier_id ASC, status ASC`; `orders`: `vendor_id ASC, status ASC, delivered_at ASC` (تقرير مبيعات التاجر اليومية)؛ `tracking`: `updated_at DESC`; messages: `created_at ASC`.
 
 ### Trust & Safety
 

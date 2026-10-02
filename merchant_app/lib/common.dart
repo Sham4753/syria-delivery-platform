@@ -1,9 +1,10 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, PlatformDispatcher, TargetPlatform;
+    show defaultTargetPlatform, kDebugMode, kIsWeb, PlatformDispatcher, TargetPlatform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 
 export 'package:cloud_functions/cloud_functions.dart';
@@ -18,11 +19,16 @@ void installAppErrorHandlers(String appName) {
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     debugPrint('[$appName][flutter_error] ${details.exceptionAsString()}');
+    if (!kIsWeb && Firebase.apps.isNotEmpty) FirebaseCrashlytics.instance.recordFlutterError(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     debugPrint('[$appName][uncaught_error] $error');
+    if (!kIsWeb && Firebase.apps.isNotEmpty) FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
     return true;
   };
+}
+Future<void> enableCrashlytics() async {
+  if (!kIsWeb && Firebase.apps.isNotEmpty) await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(!kDebugMode);
 }
 
 bool merchantIsOpen(Map<String, dynamic> data) {

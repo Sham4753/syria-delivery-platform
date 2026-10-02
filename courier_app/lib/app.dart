@@ -16,6 +16,7 @@ Future<void> bootstrapCourierApp() async {
     }
     await connectToFirebaseEmulators();
     FirebaseFirestore.instance.settings = Settings(persistenceEnabled: true);
+    await enableCrashlytics();
   } catch (error) {
     startupError = error;
   }

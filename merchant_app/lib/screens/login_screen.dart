@@ -1,5 +1,6 @@
 import '../common.dart';
 import 'store_screen.dart';
+import 'legal_screen.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key});
@@ -81,6 +82,10 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               const SizedBox(height: 18),
               FilledButton(onPressed: busy ? null : login, child: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('تسجيل الدخول')),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LegalScreen(title: 'سياسة الخصوصية', content: LegalScreen.privacy))), child: const Text('الخصوصية')),
+                TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LegalScreen(title: 'شروط الاستخدام', content: LegalScreen.terms))), child: const Text('الشروط')),
+              ]),
             ],
           ),
         ),

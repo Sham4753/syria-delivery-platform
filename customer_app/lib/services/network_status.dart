@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'order_outbox.dart';
 
 /// حالة الاتصال التي يراها التطبيق، مع تمييز الاتصال المحدود عن انقطاعه.
 enum AppNetworkState { online, limited, offline }
@@ -60,11 +61,18 @@ class NetworkStatusBanner extends StatefulWidget {
 class _NetworkStatusBannerState extends State<NetworkStatusBanner> {
   late final NetworkStatusController _controller;
   AppNetworkState _previous = AppNetworkState.online;
+  int _pending = 0;
 
   @override
   void initState() {
     super.initState();
     _controller = NetworkStatusController()..addListener(_onStatusChanged);
+    _refreshPending();
+  }
+
+  Future<void> _refreshPending() async {
+    final count = await OrderOutbox.pendingCount();
+    if (mounted) setState(() => _pending = count);
   }
 
   void _onStatusChanged() {
@@ -72,7 +80,7 @@ class _NetworkStatusBannerState extends State<NetworkStatusBanner> {
     if (current == AppNetworkState.online &&
         _previous != AppNetworkState.online) {
       final callback = widget.onOnline;
-      if (callback != null) unawaited(callback());
+      if (callback != null) unawaited(callback().whenComplete(_refreshPending));
     }
     _previous = current;
     if (mounted) setState(() {});
@@ -87,9 +95,10 @@ class _NetworkStatusBannerState extends State<NetworkStatusBanner> {
 
   @override
   Widget build(BuildContext context) {
+    final pending = _pending > 0 ? ' — $_pending عملية بانتظار المزامنة' : '';
     final message = switch (_controller.state) {
-      AppNetworkState.offline => 'لا يوجد اتصال — سيتم حفظ العمليات وإرسالها عند عودة الشبكة',
-      AppNetworkState.limited => 'اتصال محدود — نستخدم وضع توفير البيانات',
+      AppNetworkState.offline => 'لا يوجد اتصال — سيتم حفظ العمليات وإرسالها عند عودة الشبكة$pending',
+      AppNetworkState.limited => 'اتصال محدود — نستخدم وضع توفير البيانات$pending',
       AppNetworkState.online => null,
     };
     return Column(

@@ -117,6 +117,11 @@ class OrderOutbox {
         };
         if (permanent.contains(error.code)) {
           if (onlyKey != null) rethrow;
+          final blocked = Map<String, dynamic>.from(item);
+          blocked['blocked'] = true;
+          blocked['last_error'] = error.message ?? error.code;
+          blocked['last_error_at'] = DateTime.now().toUtc().toIso8601String();
+          remaining.add(blocked);
           continue;
         }
         final retry = Map<String, dynamic>.from(item);
