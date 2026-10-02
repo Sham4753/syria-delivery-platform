@@ -47,7 +47,7 @@
 `customer_id`, `fingerprint`, `order_id`, `created_at`. هذا المستند داخلي ولا يقرأه أو يكتبه أي عميل؛ يمنع إعادة إرسال نفس عملية إنشاء الطلب من إنشاء طلب أو خصم مالي ثانٍ.
 
 ### `tracking/{orderId}`
-`order_id`, `courier_id`, `location` (GeoPoint), `accuracy?`, `updated_at`.
+`order_id`, `courier_id`, `location` (GeoPoint), `accuracy?`, `updated_at`. يكتب تطبيق السائق على فترات متباعدة: كل 3 دقائق كحد أقصى، ولا يعيد الكتابة قبل تحرك 100 متر أو مرور 6 دقائق كنبضة حياة؛ يقرأ الزبون التحديثات عبر Firestore snapshot.
 
 ### `chats/{orderId}/messages/{messageId}`
 `sender_id`, `sender_role`, `text`, `created_at`, `read_by[]`.

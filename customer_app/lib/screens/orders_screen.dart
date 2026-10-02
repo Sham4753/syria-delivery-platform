@@ -182,7 +182,40 @@ class _OrderPageState extends State<OrderPage> {
             builder: (context, snapshot) {
               final data = snapshot.data?.data() as Map<String, dynamic>?;
               final point = data?['location'] as GeoPoint?;
-              return FlutterMap(
+              final rawUpdatedAt = data?['updated_at'];
+              final updatedAt = rawUpdatedAt is Timestamp
+                  ? rawUpdatedAt.toDate()
+                  : rawUpdatedAt is DateTime
+                      ? rawUpdatedAt
+                      : null;
+              final ageMinutes = updatedAt == null
+                  ? null
+                  : DateTime.now().difference(updatedAt).inMinutes;
+              final isStale = ageMinutes != null && ageMinutes >= 8;
+              return Column(
+                children: [
+                  if (point != null)
+                    ListTile(
+                      dense: true,
+                      leading: Icon(
+                        isStale ? Icons.warning_amber_rounded : Icons.gps_fixed,
+                        color: isStale ? Colors.orange.shade800 : Colors.teal,
+                      ),
+                      title: Text(
+                        isStale
+                            ? 'آخر موقع معروف — قديم نسبيًا'
+                            : 'تتبع السائق مباشرًا',
+                      ),
+                      subtitle: Text(
+                        ageMinutes == null
+                            ? 'جارٍ استلام موقع السائق…'
+                            : ageMinutes == 0
+                                ? 'تم التحديث الآن'
+                                : 'آخر تحديث منذ $ageMinutes دقيقة',
+                      ),
+                    ),
+                  Expanded(
+                    child: FlutterMap(
                 options: MapOptions(
                   initialCenter: LatLng(
                     point?.latitude ?? 33.51,
@@ -208,6 +241,9 @@ class _OrderPageState extends State<OrderPage> {
                         ),
                       ],
                     ),
+                      ],
+                    ),
+                  ),
                 ],
               );
             },

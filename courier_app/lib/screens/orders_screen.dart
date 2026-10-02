@@ -100,6 +100,9 @@ class _CourierHomeState extends State<CourierHome> {
   Timer? timer;
   Position? position;
   bool sendingLocation = false;
+  Position? lastUploadedPosition;
+  DateTime? lastUploadedAt;
+  DateTime? lastTrackingAt;
   final Set<String> activeOrderIds = <String>{};
   @override
   void initState() {
@@ -136,7 +139,8 @@ class _CourierHomeState extends State<CourierHome> {
       await FirebaseFirestore.instance.collection('couriers').doc(uid).set({'is_available': true, 'updated_at': FieldValue.serverTimestamp()}, SetOptions(merge: true));
     }
     await sendLocation();
-    timer = Timer.periodic(const Duration(minutes: 2), (_) => sendLocation());
+    // تحديث متباعد: حد أقصى 3 دقائق، مع تخطي الكتابة إذا لم يتحرك السائق.
+    timer = Timer.periodic(const Duration(minutes: 3), (_) => sendLocation());
   }
 
   Future<void> sendLocation() async {
@@ -151,24 +155,57 @@ class _CourierHomeState extends State<CourierHome> {
       if (!mounted) return;
       setState(() => position = current);
       final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid != null)
-        await FirebaseFirestore.instance.collection('couriers').doc(uid).set({
-          'current_location': GeoPoint(current.latitude, current.longitude),
-          'last_location_at': FieldValue.serverTimestamp(),
-          'updated_at': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
       if (uid != null) {
-        // تعتمد التتبعات على قائمة الطلبات الموجودة في stream أدناه، فلا نعيد
-        // استعلام الطلبات كل دقيقتين مع كل تحديث GPS.
-        for (final orderId in activeOrderIds) {
-          await FirebaseFirestore.instance.collection('tracking').doc(orderId).set({
-            'order_id': orderId,
-            'courier_id': uid,
-            'location': GeoPoint(current.latitude, current.longitude),
-            'accuracy': current.accuracy,
-            'updated_at': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+        final now = DateTime.now();
+        final movedMeters = lastUploadedPosition == null
+            ? double.infinity
+            : Geolocator.distanceBetween(
+                lastUploadedPosition!.latitude,
+                lastUploadedPosition!.longitude,
+                current.latitude,
+                current.longitude,
+              );
+        final courierHeartbeatDue = lastUploadedAt == null ||
+            now.difference(lastUploadedAt!) >= const Duration(minutes: 5);
+        final trackingHeartbeatDue = lastTrackingAt == null ||
+            now.difference(lastTrackingAt!) >= const Duration(minutes: 6);
+        final shouldWriteCourier = courierHeartbeatDue || movedMeters >= 100;
+        final shouldWriteTracking = activeOrderIds.isNotEmpty &&
+            (trackingHeartbeatDue || movedMeters >= 100);
+        if (!shouldWriteCourier && !shouldWriteTracking) return;
+
+        // Batch واحد يقلل عدد طلبات الشبكة عند وجود أكثر من طلب نشط.
+        final batch = FirebaseFirestore.instance.batch();
+        if (shouldWriteCourier) {
+          batch.set(
+            FirebaseFirestore.instance.collection('couriers').doc(uid),
+            {
+              'current_location': GeoPoint(current.latitude, current.longitude),
+              'last_location_at': FieldValue.serverTimestamp(),
+              'updated_at': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          );
         }
+        if (shouldWriteTracking) {
+          for (final orderId in activeOrderIds) {
+            batch.set(
+              FirebaseFirestore.instance.collection('tracking').doc(orderId),
+              {
+                'order_id': orderId,
+                'courier_id': uid,
+                'location': GeoPoint(current.latitude, current.longitude),
+                'accuracy': current.accuracy,
+                'updated_at': FieldValue.serverTimestamp(),
+              },
+              SetOptions(merge: true),
+            );
+          }
+        }
+        await batch.commit();
+        lastUploadedPosition = current;
+        lastUploadedAt = now;
+        if (shouldWriteTracking) lastTrackingAt = now;
       }
     } on Exception catch (error) {
       if (mounted) {
