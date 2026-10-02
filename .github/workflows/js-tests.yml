@@ -1,0 +1,76 @@
+name: JavaScript Tests and Admin Build
+
+on:
+  push:
+    paths:
+      - 'functions/**'
+      - 'scripts/**'
+      - 'admin-dashboard/**'
+      - '.github/workflows/js-tests.yml'
+  pull_request:
+    paths:
+      - 'functions/**'
+      - 'scripts/**'
+      - 'admin-dashboard/**'
+      - '.github/workflows/js-tests.yml'
+
+jobs:
+  script-test:
+    name: ${{ matrix.test_file }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file:
+          - scripts/atomicity-guard.test.js
+          - scripts/batch2-contract.test.js
+          - scripts/batch3-session-security.test.js
+          - scripts/batch4-firestore-performance.test.js
+          - scripts/batch5-error-logging.test.js
+          - scripts/courier-settlement.test.js
+          - scripts/dispatch-engine.test.js
+          - scripts/financial-ledger.test.js
+          - scripts/kds-policy.test.js
+          - scripts/loyalty.test.js
+          - scripts/outbox-contract.test.js
+          - scripts/payment-provider.test.js
+          - scripts/referral-profile.test.js
+          - scripts/security-contract.test.js
+          - scripts/security-ops.test.js
+          - scripts/test-errand-functions.js
+          - scripts/test-errand-geo.js
+          - scripts/time-utils.test.js
+          - scripts/wallet-guard.test.js
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - name: Install Functions dependencies
+        working-directory: functions
+        run: npm ci
+      - name: Run ${{ matrix.test_file }}
+        run: node "${{ matrix.test_file }}"
+
+  admin-build:
+    name: admin-dashboard build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin-dashboard/package-lock.json
+      - name: npm ci
+        working-directory: admin-dashboard
+        run: npm ci
+      - name: npm run build
+        working-directory: admin-dashboard
+        run: npm run build
