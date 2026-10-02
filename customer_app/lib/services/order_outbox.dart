@@ -47,7 +47,43 @@ class OrderOutbox {
     return value;
   }
 
-  static Future<int> pendingCount() async => (await _read()).length;
+  static Future<List<Map<String, dynamic>>> blockedItems() async {
+    final ownerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (ownerUid == null) return <Map<String, dynamic>>[];
+    return (await _read())
+        .where((item) => item['owner_uid'] == ownerUid && item['blocked'] == true)
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  static Future<int> pendingCount() async {
+    final ownerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (ownerUid == null) return 0;
+    return (await _read()).where((item) => item['owner_uid'] == ownerUid && item['blocked'] != true).length;
+  }
+
+  static Future<void> retryBlocked(String key) async {
+    final ownerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (ownerUid == null) return;
+    final items = await _read();
+    for (final item in items) {
+      if (item['owner_uid'] == ownerUid && item['idempotency_key'] == key) {
+        item.remove('blocked');
+        item.remove('last_error');
+        item.remove('last_error_at');
+        item['attempts'] = 0;
+      }
+    }
+    await _write(items);
+  }
+
+  static Future<void> remove(String key) async {
+    final ownerUid = FirebaseAuth.instance.currentUser?.uid;
+    if (ownerUid == null) return;
+    final items = await _read();
+    items.removeWhere((item) => item['owner_uid'] == ownerUid && item['idempotency_key'] == key);
+    await _write(items);
+  }
 
   static Future<void> enqueue(Map<String, dynamic> payload) async {
     final key = '${payload['idempotency_key'] ?? ''}';

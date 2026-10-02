@@ -1,6 +1,75 @@
 import '../common.dart';
 import '../services/order_outbox.dart';
 
+class BlockedOutboxPage extends StatefulWidget {
+  const BlockedOutboxPage({super.key});
+  @override
+  State<BlockedOutboxPage> createState() => _BlockedOutboxPageState();
+}
+
+class _BlockedOutboxPageState extends State<BlockedOutboxPage> {
+  late Future<List<Map<String, dynamic>>> _items;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  void _reload() => _items = OrderOutbox.blockedItems();
+
+  Future<void> _retry(String key) async {
+    await OrderOutbox.retryBlocked(key);
+    try {
+      final result = await OrderOutbox.flush(onlyKey: key);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result == null ? 'تعذر إرسال الطلب الآن' : 'تم إرسال الطلب بنجاح')));
+    } on FirebaseFunctionsException catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'لا يزال الطلب غير صالح للإرسال')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر إعادة المحاولة، سيبقى الطلب محفوظًا')));
+    }
+    if (mounted) setState(_reload);
+  }
+
+  Future<void> _remove(String key) async {
+    await OrderOutbox.remove(key);
+    if (mounted) setState(_reload);
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('طلبات تحتاج مراجعة')),
+    body: FutureBuilder<List<Map<String, dynamic>>>(
+      future: _items,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        final items = snapshot.data!;
+        if (items.isEmpty) return const Center(child: Text('لا توجد طلبات محظورة'));
+        return ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            final key = '${item['idempotency_key'] ?? ''}';
+            final payload = item['payload'] is Map ? Map<String, dynamic>.from(item['payload'] as Map) : <String, dynamic>{};
+            return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('طلب محفوظ — متجر ${payload['vendor_id'] ?? 'غير معروف'}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text('${item['last_error'] ?? 'تعذر إرسال الطلب'}', style: TextStyle(color: Colors.red.shade700)),
+              const SizedBox(height: 10),
+              Row(children: [
+                FilledButton.icon(onPressed: key.isEmpty ? null : () => _retry(key), icon: const Icon(Icons.refresh), label: const Text('إعادة المحاولة')),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(onPressed: key.isEmpty ? null : () => _remove(key), icon: const Icon(Icons.delete_outline), label: const Text('حذف')),
+              ]),
+            ])));
+          },
+        );
+      },
+    ),
+  );
+}
+
 class OrderPage extends StatefulWidget {
   final String orderId;
   const OrderPage({Key? key, required this.orderId});
@@ -319,7 +388,16 @@ class OrdersHistoryPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     return Scaffold(
-      appBar: AppBar(title: const Text('طلباتي')),
+      appBar: AppBar(
+        title: const Text('طلباتي'),
+        actions: [
+          IconButton(
+            tooltip: 'طلبات تحتاج مراجعة',
+            icon: const Icon(Icons.cloud_off),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedOutboxPage())),
+          ),
+        ],
+      ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('orders')
