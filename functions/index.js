@@ -286,7 +286,7 @@ const CONFIG_LIMITS = {
 
 const PUBLIC_CONFIG_KEYS = new Set([
   'app_name', 'currency', 'support_phone', 'default_delivery_fee', 'emergency_mode', 'emergency_message',
-  'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_points_divisor', 'loyalty_point_value', 'errand_fee_per_km',
+  'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_point_value', 'errand_fee_per_km',
   'errand_min_fee', 'max_change_amount', 'pricing_tiers', 'banners', 'categories', 'home_sections',
   'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode',
   'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
