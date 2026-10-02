@@ -1,6 +1,8 @@
 import 'common.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'screens/home_screen.dart';
+import 'services/network_status.dart';
+import 'services/order_outbox.dart';
 
 Future<void> bootstrapCustomerApp() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -70,7 +72,10 @@ class CustomerApp extends StatelessWidget {
         ),
       ),
     ),
-    home: const HomePage(),
+    home: NetworkStatusBanner(
+      onOnline: OrderOutbox.flush,
+      child: const HomePage(),
+    ),
   );
 }
 

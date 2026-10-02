@@ -1,6 +1,7 @@
 import 'common.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'screens/login_screen.dart';
+import 'services/network_status.dart';
 
 Future<void> bootstrapMerchantApp() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,14 +70,16 @@ class MerchantApp extends StatelessWidget {
         ),
       ),
     ),
-    home: StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.idTokenChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
-        }
-        return snapshot.data == null ? const LoginPage() : const MerchantGate();
-      },
+    home: NetworkStatusBanner(
+      child: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.idTokenChanges(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          return snapshot.data == null ? const LoginPage() : const MerchantGate();
+        },
+      ),
     ),
   );
 }

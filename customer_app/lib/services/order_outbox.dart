@@ -122,12 +122,12 @@ class OrderOutbox {
         final retry = Map<String, dynamic>.from(item);
         retry['attempts'] = (retry['attempts'] as num? ?? 0) + 1;
         retry['last_error_at'] = DateTime.now().toUtc().toIso8601String();
-        if ((retry['attempts'] as int) <= 5) remaining.add(retry);
+        remaining.add(retry);
       } catch (_) {
         final retry = Map<String, dynamic>.from(item);
         retry['attempts'] = (retry['attempts'] as num? ?? 0) + 1;
         retry['last_error_at'] = DateTime.now().toUtc().toIso8601String();
-        if ((retry['attempts'] as int) <= 5) remaining.add(retry);
+        remaining.add(retry);
       }
     }
     await _write(remaining);
