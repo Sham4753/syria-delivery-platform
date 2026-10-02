@@ -35,6 +35,7 @@ const {OFFER_TTL_MS, rankCouriers, pointOf} = require('./dispatch-engine');
 const {isWithinOpeningHours} = require('./time-utils');
 const {normalizeTopUpRequest, consumeTopUpQuotas} = require('./wallet-guard');
 const {sendMerchantFallback} = require('./merchant-alerts');
+const {loyaltyPointsForOrder} = require('./loyalty');
 const {aggregateMerchantReports} = require('./merchant-reports');
 
 initializeApp();
@@ -272,7 +273,7 @@ const CONFIG_LIMITS = {
   app_name: {type: 'string', max: 80}, currency: {type: 'string', max: 8}, support_phone: {type: 'string', max: 32},
   default_delivery_fee: {type: 'number', min: 0, max: 1000000000}, emergency_mode: {type: 'boolean'}, emergency_message: {type: 'string', max: 500},
   surge_enabled: {type: 'boolean'}, surge_multiplier: {type: 'number', min: 0.1, max: 10}, loyalty_point_value: {type: 'number', min: 0, max: 1000000},
-  loyalty_points_rate: {type: 'number', min: 0, max: 1000000}, errand_fee_per_km: {type: 'number', min: 0, max: 1000000000},
+  loyalty_points_rate: {type: 'number', min: 0, max: 1000000}, loyalty_points_divisor: {type: 'number', min: 1, max: 1000000}, errand_fee_per_km: {type: 'number', min: 0, max: 1000000000},
   errand_min_fee: {type: 'number', min: 0, max: 1000000000}, max_change_amount: {type: 'number', min: 0, max: 1000000000},
   pricing_tiers: {type: 'pricing_tiers'}, commission_by_zone: {type: 'commission_by_zone'}, banners: {type: 'banners'},
   categories: {type: 'categories'}, home_sections: {type: 'string_array', max: 20}, featured_vendor_ids: {type: 'id_array', max: 500},
@@ -285,7 +286,7 @@ const CONFIG_LIMITS = {
 
 const PUBLIC_CONFIG_KEYS = new Set([
   'app_name', 'currency', 'support_phone', 'default_delivery_fee', 'emergency_mode', 'emergency_message',
-  'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_point_value', 'errand_fee_per_km',
+  'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_points_divisor', 'loyalty_point_value', 'errand_fee_per_km',
   'errand_min_fee', 'max_change_amount', 'pricing_tiers', 'banners', 'categories', 'home_sections',
   'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode',
   'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
@@ -1369,7 +1370,7 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
     const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = courierDebtForDeliveredOrder(after); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
       const existing = await tx.get(eventRef); if (existing.exists) return; tx.set(walletRef, {debt: FieldValue.increment(debt), total_earnings: FieldValue.increment(earnings), balance: FieldValue.increment(earnings), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(eventRef, {type: 'delivery', order_id: event.params.orderId, debt, earnings, created_at: FieldValue.serverTimestamp()});
     }); const customerRef = db.doc(`users/${after.customer_id}`); const loyaltyRef = customerRef.collection('loyalty_ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {
-      const existing = await tx.get(loyaltyRef); if (existing.exists) return; const points = Math.floor(Math.max(0, Number(after.subtotal || 0) - Number(after.discount_amount || 0)) / Math.max(1, Number((await db.doc('system_config/main').get()).data()?.loyalty_points_divisor || 1000)) * Number((await db.doc('system_config/main').get()).data()?.loyalty_points_rate || 0)); tx.set(customerRef, {loyalty_points: FieldValue.increment(points), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(loyaltyRef, {points, order_id: event.params.orderId, created_at: FieldValue.serverTimestamp()});
+      const existing = await tx.get(loyaltyRef); if (existing.exists) return; const loyaltyConfig = (await db.doc('system_config/main').get()).data() || {}; const points = loyaltyPointsForOrder({subtotal: after.subtotal, discount: after.discount_amount, rate: loyaltyConfig.loyalty_points_rate, config: loyaltyConfig}); tx.set(customerRef, {loyalty_points: FieldValue.increment(points), updated_at: FieldValue.serverTimestamp()}, {merge: true}); tx.create(loyaltyRef, {points, order_id: event.params.orderId, created_at: FieldValue.serverTimestamp()});
     });
   }
   if (statusChanged && after.status === 'delivered' && after.customer_id) {
