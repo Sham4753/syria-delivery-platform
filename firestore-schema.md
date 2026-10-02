@@ -134,3 +134,9 @@ Flutter enables Firestore local persistence and uses cached snapshots while offl
 ### Errands and wallet ledger
 
 Orders with `fulfillment_type: "errand"` use `pickup_address`, `delivery_address`, and `errand_description` instead of a vendor and product list. `wallet_ledger/{orderId}` records a one-time `change_to_wallet` operation with `amount`, `currency`, `customer_id`, and `courier_id`.
+
+## تقارير التاجر وإشعارات الاحتياط
+
+`getMerchantReports` هي دالة callable محمية بأدوار فريق المتجر، وتعيد تقريرًا ليوم دمشق المحدد (`YYYY-MM-DD`) يتضمن الطلبات المُسلّمة، إجمالي المبيعات، صافي المتجر، العمولة، النقد المحصل، أكثر عشرة منتجات، وملخص الورديات والتسويات. لا يعتمد التقرير على آخر 50 طلبًا فقط؛ بل يجمع طلبات اليوم من الخادم.
+
+عند إنشاء طلب أو إلغائه، يرسل `notifyOrderChange` إشعار FCM كالمعتاد، ثم يحاول قناة احتياطية للتاجر فقط إذا كانت `MERCHANT_ALERT_CHANNEL` مفعّلة. القنوات مدعومة عبر Twilio (`sms`, `whatsapp`, أو `both`) وتُضبط أسرارها في بيئة Cloud Functions من خلال المتغيرات الموجودة في `functions/.env.example`. الوضع الافتراضي `off`، ولا تُحفظ مفاتيح المزود أو الأسرار في Firestore أو GitHub.

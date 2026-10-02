@@ -34,6 +34,8 @@ const {VENDOR_ROLES, canTransition} = require('./kds-policy');
 const {OFFER_TTL_MS, rankCouriers, pointOf} = require('./dispatch-engine');
 const {isWithinOpeningHours} = require('./time-utils');
 const {normalizeTopUpRequest, consumeTopUpQuotas} = require('./wallet-guard');
+const {sendMerchantFallback} = require('./merchant-alerts');
+const {aggregateMerchantReports} = require('./merchant-reports');
 
 initializeApp();
 const db = getFirestore();
@@ -191,6 +193,25 @@ exports.sendBroadcastNotification = onCall(async (data, context) => {
   } while (cursor);
   await db.collection('notification_logs').add({title, body, target_role: targetRole, recipients, sent, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
   return {sent};
+});
+
+exports.getMerchantReports = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const profile = await requireRole(context.auth.uid, ['super_admin', ...VENDOR_ROLES]);
+  const vendorId = String(data?.vendor_id || profile.vendor_id || '').trim();
+  if (!vendorId) throw new HttpsError('invalid-argument', 'معرّف المتجر مطلوب');
+  if (profile.role !== 'super_admin' && profile.vendor_id !== vendorId) {
+    throw new HttpsError('permission-denied', 'لا تملك صلاحية هذا المتجر');
+  }
+  const date = String(data?.date || new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Damascus'}).format(new Date()));
+  try {
+    return await aggregateMerchantReports({db, vendorId, date});
+  } catch (error) {
+    if (error.message === 'date must use YYYY-MM-DD' || error.message === 'invalid date') {
+      throw new HttpsError('invalid-argument', 'التاريخ يجب أن يكون بصيغة YYYY-MM-DD');
+    }
+    throw error;
+  }
 });
 
 const CONFIG_LIMITS = {
@@ -1244,7 +1265,17 @@ exports.notifyOrderChange = onDocumentWritten('orders/{orderId}', async (event) 
   if (!statusChanged) return;
   const body = `حالة طلبك: ${after.status}`; await notifyUser(after.customer_id, 'تحديث الطلب', body, {order_id: event.params.orderId}); await notifyUser(after.courier_id, 'تحديث مهمة التوصيل', body, {order_id: event.params.orderId});
   if (after.vendor_id) {
-    const admin = await db.collection('users').where('vendor_id', '==', after.vendor_id).where('role', '==', 'vendor_admin').limit(1).get(); if (!admin.empty) await notifyUser(admin.docs[0].id, 'تحديث طلب المتجر', body, {order_id: event.params.orderId});
+    const admin = await db.collection('users').where('vendor_id', '==', after.vendor_id).where('role', '==', 'vendor_admin').limit(1).get();
+    if (!admin.empty) await notifyUser(admin.docs[0].id, 'تحديث طلب المتجر', body, {order_id: event.params.orderId});
+    // قناة احتياطية اختيارية للطلبات الجديدة والإلغاءات عند ضعف إنترنت التاجر.
+    if (['pending', 'cancelled', 'failed_delivery', 'returned'].includes(after.status)) {
+      const vendor = (await db.doc(`vendors/${after.vendor_id}`).get()).data() || {};
+      await sendMerchantFallback({
+        phone: vendor.phone,
+        body: `Syria Delivery | ${after.status === 'pending' ? 'طلب جديد' : 'تحديث مهم'} #${event.params.orderId.slice(0, 8)} — ${Number(after.total || 0)} ل.س`,
+        logWarn,
+      });
+    }
   }
   if (statusChanged && after.status === 'delivered' && after.courier_id) {
     const earnings = Math.max(0, Number(after.delivery_fee || 0)); const debt = courierDebtForDeliveredOrder(after); const walletRef = db.doc(`courier_wallets/${after.courier_id}`); const eventRef = walletRef.collection('ledger').doc(event.params.orderId); await db.runTransaction(async (tx) => {

@@ -535,39 +535,94 @@ class _MerchantHomeState extends State<MerchantHome> {
     );
   }
 
-  Widget _reports() => StreamBuilder<QuerySnapshot>(
-    stream: orders,
-    builder: (c, s) {
-      final docs = s.data?.docs ?? [];
-      final total = docs.fold<num>(
-        0,
-        (a, d) => a + ((d.data() as Map<String, dynamic>)['subtotal'] ?? 0),
+  String _reportDate() {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<Map<String, dynamic>> _loadReports() async {
+    final result = await appFunctions.httpsCallable('getMerchantReports').call({
+      'vendor_id': widget.vendorId,
+      'date': _reportDate(),
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  Widget _reportMetric(String title, Object? value, {String suffix = ' ل.س'}) => Card(
+        child: ListTile(
+          title: Text(title),
+          trailing: Text('$value$suffix', style: const TextStyle(fontWeight: FontWeight.bold)),
+        ),
       );
-      final commission = docs.fold<num>(
-        0,
-        (a, d) => a + ((d.data() as Map<String, dynamic>)['commission'] ?? 0),
+
+  Widget _reports() => FutureBuilder<Map<String, dynamic>>(
+        future: _loadReports(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('تعذر تحميل تقرير اليوم. تحقق من الاتصال ثم أعد المحاولة.', textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton(onPressed: () => setState(() {}), child: const Text('إعادة المحاولة')),
+                  ],
+                ),
+              ),
+            );
+          }
+          final data = snapshot.data ?? <String, dynamic>{};
+          final settlement = Map<String, dynamic>.from(data['settlement'] as Map? ?? {});
+          final products = (data['top_products'] as List? ?? []).whereType<Map>().toList();
+          return RefreshIndicator(
+            onRefresh: () async => setState(() {}),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text('تقرير ${data['date'] ?? _reportDate()}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('${data['orders_count'] ?? 0} طلبًا مُسلّمًا اليوم', style: TextStyle(color: Colors.blueGrey.shade700)),
+                const SizedBox(height: 12),
+                _reportMetric('إجمالي المبيعات', data['gross_sales'] ?? 0),
+                _reportMetric('صافي المتجر بعد العمولة', data['vendor_net'] ?? 0),
+                _reportMetric('عمولة المنصة', data['platform_commission'] ?? 0),
+                _reportMetric('النقد المحصل للمتجر', data['cash_collected'] ?? 0),
+                const SizedBox(height: 18),
+                const Text('أكثر المنتجات مبيعًا', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                if (products.isEmpty) const Card(child: ListTile(title: Text('لا توجد مبيعات مُسلّمة لهذا اليوم'))),
+                ...products.asMap().entries.map((entry) {
+                  final item = Map<String, dynamic>.from(entry.value);
+                  return Card(
+                    child: ListTile(
+                      leading: CircleAvatar(child: Text('${entry.key + 1}')),
+                      title: Text('${item['name'] ?? 'صنف'}'),
+                      subtitle: Text('${item['quantity'] ?? 0} وحدة'),
+                      trailing: Text('${item['revenue'] ?? 0} ل.س'),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 18),
+                const Text('التسوية المالية', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                _reportMetric('المتوقع في الصندوق', settlement['expected_cash'] ?? 0),
+                _reportMetric('المعدود فعليًا', settlement['counted_cash'] ?? 0),
+                _reportMetric('الفرق', settlement['variance'] ?? 0),
+                Card(
+                  child: ListTile(
+                    title: const Text('حالة التسويات'),
+                    subtitle: Text('معتمدة: ${settlement['approved'] ?? 0}  •  بانتظار الاعتماد: ${settlement['pending'] ?? 0}'),
+                    trailing: Text('ورديات اليوم: ${settlement['shifts_count'] ?? 0}'),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       );
-      return ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text(
-            'ملخص المبيعات',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-          ListTile(
-            title: const Text('عدد الطلبات'),
-            trailing: Text('${docs.length}'),
-          ),
-          ListTile(
-            title: const Text('إجمالي المبيعات'),
-            trailing: Text('$total ل.س'),
-          ),
-          ListTile(
-            title: const Text('عمولة المنصة'),
-            trailing: Text('$commission ل.س'),
-          ),
-        ],
-      );
-    },
-  );
+
 }
