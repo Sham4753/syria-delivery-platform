@@ -33,7 +33,11 @@ foreach ($Name in $Targets) {
     flutter pub get
     if (-not $SkipAnalyze) {
       Write-Host "[$Name] flutter analyze" -ForegroundColor Yellow
-      flutter analyze
+      $AnalysisOutput = flutter analyze 2>&1
+      $AnalysisOutput | ForEach-Object { Write-Host $_ }
+      if ($AnalysisOutput -match '(^|\s)error •') {
+        throw "[$Name] وجد flutter analyze أخطاء حقيقية."
+      }
     }
 
     if ($Mode -eq 'debug') {
