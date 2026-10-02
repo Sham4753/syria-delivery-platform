@@ -121,6 +121,10 @@ class OrderOutbox {
         remaining.add(item);
         continue;
       }
+      if (onlyKey == null && item['blocked'] == true) {
+        remaining.add(item);
+        continue;
+      }
       if (onlyKey != null && key != onlyKey) {
         remaining.add(item);
         continue;
