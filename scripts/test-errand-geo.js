@@ -43,11 +43,11 @@ const km = haversineKm(P(33.5138, 36.2765), P(34.7324, 36.7137));
 assert.ok(km > 130 && km < 150, `distance ${km}`);
 
 // الرسم: نفس منطق createOrder
-assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 10000}, config: {}, distanceKm: 5}).fee, 10000);
-assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 10000, surge_multiplier: 1.5}, config: {surge_enabled: true, surge_multiplier: 2}}).fee, 30000);
-assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 10000}, config: {surge_enabled: false, surge_multiplier: 5}}).fee, 10000, 'global surge only when enabled');
-assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 1000}, config: {errand_fee_per_km: 500}, distanceKm: 4}).fee, 3000);
-assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 1000}, config: {errand_min_fee: 5000}}).fee, 5000);
-assert.strictEqual(computeErrandFee({zone: {}, config: {default_delivery_fee: 7000}}).fee, 7000, 'falls back to default fee');
+assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 100}, config: {}, distanceKm: 5}).fee, 100);
+assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 100, surge_multiplier: 1.5}, config: {surge_enabled: true, surge_multiplier: 2}}).fee, 300);
+assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 100}, config: {surge_enabled: false, surge_multiplier: 5}}).fee, 100, 'global surge only when enabled');
+assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 10}, config: {errand_fee_per_km: 5}, distanceKm: 4}).fee, 30);
+assert.strictEqual(computeErrandFee({zone: {delivery_fee_base: 10}, config: {errand_min_fee: 50}}).fee, 50);
+assert.strictEqual(computeErrandFee({zone: {}, config: {default_delivery_fee: 70}}).fee, 70, 'falls back to default fee');
 assert.strictEqual(computeErrandFee({zone: {}, config: {}}).fee, 0, 'misconfigured fee is 0 (callable rejects it)');
 console.log('geo tests passed');

@@ -145,7 +145,7 @@ async function main() {
       label: 'المنزل', city: 'دمشق', address: 'عنوان اختبار الشراء - دمشق', landmark: 'قرب المنطقة الأولى',
       location: {latitude: 33.5138, longitude: 36.2765},
     },
-    payment_method: 'cash_on_delivery', wallet_amount: 0, loyalty_points: 0, cash_change_for: 100000,
+    payment_method: 'cash_on_delivery', wallet_amount: 0, loyalty_points: 0, cash_change_for: 1000,
   };
 
   assertRejected(await callCancelOrder({'content-type': 'application/json'}, {order_id: ''}), 'UNAUTHENTICATED', 'تسجيل الدخول', 'cancel unauthenticated caller');
@@ -284,7 +284,7 @@ async function main() {
     }
 
     await resetEmulatorRateLimit(auth.localId);
-    const hybridData = {...baseData, idempotency_key: `smoke-order-hybrid-cancel-${runId}`, payment_method: 'hybrid', wallet_amount: 10000, loyalty_points: 10};
+    const hybridData = {...baseData, idempotency_key: `smoke-order-hybrid-cancel-${runId}`, payment_method: 'hybrid', wallet_amount: 100, loyalty_points: 10};
     const beforeHybridCreate = (await db.doc(`users/${auth.localId}`).get()).data() || {};
     const hybridOrder = await callCreateOrder(headers, hybridData);
     if (!hybridOrder.response.ok || hybridOrder.body.error) throw new Error(`hybrid fixture failed: ${JSON.stringify(hybridOrder.body)}`);
@@ -306,7 +306,7 @@ async function main() {
         Number(afterRefund.loyalty_points) - Number(afterHybridCreate.loyalty_points) !== Number(hybrid.loyalty_points_refunded) ||
         Number(afterRefund.wallet_balance) !== Number(beforeHybridCreate.wallet_balance) ||
         Number(afterRefund.loyalty_points) !== Number(beforeHybridCreate.loyalty_points) ||
-        Number(hybrid.wallet_refunded) !== 10000 || Number(hybrid.loyalty_points_refunded) !== 10 ||
+        Number(hybrid.wallet_refunded) !== 100 || Number(hybrid.loyalty_points_refunded) !== 10 ||
         !(await db.doc(`users/${auth.localId}/wallet_ledger/refund_${hybridId}`).get()).exists ||
         !(await db.doc(`users/${auth.localId}/loyalty_ledger/${hybridId}`).get()).exists) {
       throw new Error(`hybrid cancellation debit/refund was not exact: ${JSON.stringify({beforeHybridCreate, afterHybridCreate, afterRefund, hybrid})}`);

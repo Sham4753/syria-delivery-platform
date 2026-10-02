@@ -23,19 +23,19 @@ async function ensureUser(email, password, role, extra = {}) {
 
 function productsFor(category, index) {
   if (category === 'restaurant') return [
-    { id: 'meal', name: `وجبة تجريبية ${index}`, price: 25000 },
-    { id: 'sandwich', name: 'سندويشة دجاج', price: 18000 },
-    { id: 'drink', name: 'مشروب بارد', price: 5000 },
+    { id: 'meal', name: `وجبة تجريبية ${index}`, price: 250 },
+    { id: 'sandwich', name: 'سندويشة دجاج', price: 180 },
+    { id: 'drink', name: 'مشروب بارد', price: 50 },
   ];
   if (category === 'pharmacy') return [
-    { id: 'vitamins', name: 'فيتامينات تجريبية', price: 22000 },
-    { id: 'care', name: 'منتج عناية شخصية', price: 16000 },
-    { id: 'mask', name: 'كمامات', price: 6000 },
+    { id: 'vitamins', name: 'فيتامينات تجريبية', price: 220 },
+    { id: 'care', name: 'منتج عناية شخصية', price: 160 },
+    { id: 'mask', name: 'كمامات', price: 60 },
   ];
   return [
-    { id: 'rice', name: 'رز 1 كغ', price: 14000 },
-    { id: 'milk', name: 'حليب', price: 9000 },
-    { id: 'water', name: 'مياه معدنية', price: 4000 },
+    { id: 'rice', name: 'رز 1 كغ', price: 140 },
+    { id: 'milk', name: 'حليب', price: 90 },
+    { id: 'water', name: 'مياه معدنية', price: 40 },
   ];
 }
 
@@ -83,11 +83,11 @@ async function main() {
 
   await db.doc('system_config/main').set({
     app_name: 'Syria Delivery Demo', currency: 'SYP', surge_enabled: false, surge_multiplier: 1,
-    batching_enabled: false, max_batch_orders: 2, loyalty_points_rate: 1, loyalty_point_value: 10,
+    batching_enabled: false, max_batch_orders: 2, loyalty_points_rate: 1, loyalty_point_value: 0.1, loyalty_points_divisor: 10,
     enable_guest_shopping: true, enable_google_auth: true, enable_facebook_auth: false,
     enable_whatsapp_otp: false, low_bandwidth_mode: true, updated_at: timestamp(),
   }, { merge: true });
-  await db.doc('zones/zone-1').set({ name: 'دمشق وريف دمشق - تجربة', delivery_fee_base: 10000, is_active: true, is_accepting_orders: true, surge_multiplier: 1, updated_at: timestamp() }, { merge: true });
+  await db.doc('zones/zone-1').set({ name: 'دمشق وريف دمشق - تجربة', delivery_fee_base: 100, is_active: true, is_accepting_orders: true, surge_multiplier: 1, updated_at: timestamp() }, { merge: true });
   await db.doc('zones_geo/zone-1').set({
     polygon: [{lat: 32.9, lng: 35.8}, {lat: 32.9, lng: 37.2}, {lat: 34.2, lng: 37.2}, {lat: 34.2, lng: 35.8}],
     is_active: true,
@@ -127,12 +127,12 @@ async function main() {
   const customerIds = [];
   for (let index = 1; index <= 10; index += 1) {
     const email = `customer${String(index).padStart(2, '0')}@test.local`;
-    const user = await ensureUser(email, 'test123456', 'customer', { display_name: `زبون تجريبي ${index}`, phone: `0910000${String(index).padStart(3, '0')}`, wallet_balance: 100000, loyalty_points: 100, demo_seeded: true });
+    const user = await ensureUser(email, 'test123456', 'customer', { display_name: `زبون تجريبي ${index}`, phone: `0910000${String(index).padStart(3, '0')}`, wallet_balance: 1000, loyalty_points: 100, demo_seeded: true });
     customerIds.push(user.uid);
     await db.doc(`users/${user.uid}/addresses/home`).set({ label: 'المنزل', city: 'دمشق', address: `عنوان تجريبي ${index} - دمشق`, landmark: 'قرب المنطقة الأولى', location: new admin.firestore.GeoPoint(33.5138, 36.2765), updated_at: timestamp() }, { merge: true });
   }
 
-  await db.doc('coupons/FIRST50').set({ type: 'percentage', value: 50, min_order_amount: 10000, expires_at: null, usage_limit_total: 100, usage_limit_per_customer: 1, used_count: 0, is_active: true, source: 'demo' }, { merge: true });
+  await db.doc('coupons/FIRST50').set({ type: 'percentage', value: 50, min_order_amount: 100, expires_at: null, usage_limit_total: 100, usage_limit_per_customer: 1, used_count: 0, is_active: true, source: 'demo' }, { merge: true });
   console.log(JSON.stringify({
     status: 'seeded', vendors: seededVendors.length, restaurants: 10, pharmacies: 10, groceries: 10,
     couriers: courierIds.length, customers: customerIds.length,

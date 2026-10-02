@@ -5,7 +5,7 @@ const {
   assertPaymentTransition,
 } = require('../functions/financial-ledger');
 
-const entries = bankTransferLedgerEntries({paymentId: 'pay_123', orderId: 'order_123', amount: 12500, currency: 'SYP', actorId: 'admin_1'});
+const entries = bankTransferLedgerEntries({paymentId: 'pay_123', orderId: 'order_123', amount: 125, currency: 'SYP', actorId: 'admin_1'});
 assert.strictEqual(entries.length, 2);
 assert.strictEqual(entries[0].direction, 'debit');
 assert.strictEqual(entries[1].direction, 'credit');

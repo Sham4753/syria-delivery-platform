@@ -47,8 +47,8 @@ function setup() {
   const put = (path, data) => db.store.set(path, data);
   put('zones_geo/z1', {polygon: [{lat: 33, lng: 36}, {lat: 33, lng: 37}, {lat: 34, lng: 37}, {lat: 34, lng: 36}], is_active: true});
   put('zones_geo/z2', {polygon: [{lat: 35, lng: 36}, {lat: 35, lng: 37}, {lat: 36, lng: 37}, {lat: 36, lng: 36}], is_active: true});
-  put('zones/z1', {name: 'z1', delivery_fee_base: 10000, is_active: true, is_accepting_orders: true});
-  put('zones/z2', {name: 'z2', delivery_fee_base: 8000, is_active: true, is_accepting_orders: true});
+  put('zones/z1', {name: 'z1', delivery_fee_base: 100, is_active: true, is_accepting_orders: true});
+  put('zones/z2', {name: 'z2', delivery_fee_base: 80, is_active: true, is_accepting_orders: true});
   put('system_config/main', {});
   put('users/cust', {role: 'customer', wallet_balance: 0});
   put('users/cour', {role: 'courier'});
@@ -62,14 +62,14 @@ const ctx = (uid) => ({auth: {uid}});
 const pickup = {label: 'أ', latitude: 33.5, longitude: 36.5};
 const dropoff = {label: 'ب', latitude: 33.6, longitude: 36.6};
 let keyN = 0; const key = () => `errand-key-${Date.now()}-${++keyN}-xxxxxxxx`;
-const base = () => ({pickup_address: pickup, dropoff_address: dropoff, description: 'طرد', expected_fee: 10000, idempotency_key: key()});
+const base = () => ({pickup_address: pickup, dropoff_address: dropoff, description: 'طرد', expected_fee: 100, idempotency_key: key()});
 
 (async () => {
   // ---- عرض السعر والإنشاء ----
   {
     const {db, fns} = setup();
     const q = await fns.quoteErrand({pickup_address: pickup, dropoff_address: dropoff}, ctx('cust'));
-    assert.strictEqual(q.zone_id, 'z1'); assert.strictEqual(q.delivery_fee, 10000);
+    assert.strictEqual(q.zone_id, 'z1'); assert.strictEqual(q.delivery_fee, 100);
     await rejects(fns.quoteErrand({pickup_address: pickup, dropoff_address: dropoff}, {}), 'unauthenticated', 'quote needs login');
     await rejects(fns.quoteErrand({pickup_address: {latitude: 40, longitude: 40}, dropoff_address: dropoff}, ctx('cust')), 'failed-precondition', 'pickup outside');
     await rejects(fns.quoteErrand({pickup_address: pickup, dropoff_address: {latitude: 35.5, longitude: 36.5}}, ctx('cust')), 'failed-precondition', 'different zones');
@@ -78,15 +78,15 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     // العميل يحاول فرض رسم ومنطقة: يُتجاهل
     const res = await fns.createErrand({...base(), delivery_fee: 1, zone_id: 'evil'}, ctx('cust'));
     const order = db.store.get(`orders/${res.order_id}`);
-    assert.strictEqual(order.delivery_fee, 10000, 'fee comes from the server'); assert.strictEqual(order.zone_id, 'z1');
-    assert.strictEqual(order.cash_due, 10000); assert.strictEqual(order.courier_id, null); assert.strictEqual(order.status, 'pending');
+    assert.strictEqual(order.delivery_fee, 100, 'fee comes from the server'); assert.strictEqual(order.zone_id, 'z1');
+    assert.strictEqual(order.cash_due, 100); assert.strictEqual(order.courier_id, null); assert.strictEqual(order.status, 'pending');
     assert.ok(db.store.get(`order_secrets/${res.order_id}`).otp_hash, 'otp secret created');
 
     // بدون expected_fee أو بسعر قديم
     const b = base(); delete b.expected_fee;
     await rejects(fns.createErrand(b, ctx('cust')), 'invalid-argument', 'missing expected_fee');
     const e = await rejects(fns.createErrand({...base(), expected_fee: 1}, ctx('cust')), 'failed-precondition', 'stale price');
-    assert.strictEqual(e.details.reason, 'price_changed'); assert.strictEqual(e.details.delivery_fee, 10000);
+    assert.strictEqual(e.details.reason, 'price_changed'); assert.strictEqual(e.details.delivery_fee, 100);
   }
   // ---- التكرار وحد المعدل ----
   {
@@ -106,18 +106,18 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     const {db, fns} = setup();
     db.store.set('zones/z1', {name: 'z1', is_active: true, is_accepting_orders: true});
     await rejects(fns.quoteErrand({pickup_address: pickup, dropoff_address: dropoff}, ctx('cust')), 'failed-precondition', 'zero fee');
-    db.store.set('zones/z1', {delivery_fee_base: 10000, is_active: true, is_accepting_orders: false});
+    db.store.set('zones/z1', {delivery_fee_base: 100, is_active: true, is_accepting_orders: false});
     await rejects(fns.quoteErrand({pickup_address: pickup, dropoff_address: dropoff}, ctx('cust')), 'failed-precondition', 'zone paused');
   }
   // ---- تحويل الفكة ----
   {
     const {db, fns, put} = setup();
-    const delivered = (extra = {}) => ({customer_id: 'cust', courier_id: 'cour', status: 'delivered', payment_method: 'cash_on_delivery', cash_due: 30000, cash_change_for: 50000, delivered_at: FieldValue.serverTimestamp(), ...extra});
+    const delivered = (extra = {}) => ({customer_id: 'cust', courier_id: 'cour', status: 'delivered', payment_method: 'cash_on_delivery', cash_due: 300, cash_change_for: 500, delivered_at: FieldValue.serverTimestamp(), ...extra});
     put('orders/o1', delivered());
     await rejects(fns.requestChangeToWallet({order_id: 'o1'}, ctx('cust')), 'permission-denied', 'customer cannot request');
     await rejects(fns.requestChangeToWallet({order_id: 'o1'}, ctx('cour2')), 'failed-precondition', 'other courier');
     const r = await fns.requestChangeToWallet({order_id: 'o1', amount: 999999}, ctx('cour'));
-    assert.strictEqual(r.amount, 20000, 'amount computed by server, not claimed'); assert.strictEqual(r.status, 'pending');
+    assert.strictEqual(r.amount, 200, 'amount computed by server, not claimed'); assert.strictEqual(r.status, 'pending');
     assert.strictEqual(db.store.get('change_requests/o1').needs_manual_review, false);
     assert.strictEqual(db.store.get('change_requests/o1').courier_claimed_amount, 999999);
     assert.strictEqual(db.store.get('users/cust').wallet_balance, 0, 'no credit before review');
@@ -125,7 +125,7 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
 
     put('orders/o2', delivered({delivered_at: {toMillis: () => Date.now() - 49 * 3600 * 1000}}));
     await rejects(fns.requestChangeToWallet({order_id: 'o2'}, ctx('cour')), 'failed-precondition', 'expired window');
-    put('orders/o3', delivered({cash_change_for: 30000}));
+    put('orders/o3', delivered({cash_change_for: 300}));
     await rejects(fns.requestChangeToWallet({order_id: 'o3'}, ctx('cour')), 'failed-precondition', 'no change to convert');
     put('orders/o4', delivered({status: 'on_the_way'}));
     await rejects(fns.requestChangeToWallet({order_id: 'o4'}, ctx('cour')), 'failed-precondition', 'not delivered');
@@ -135,20 +135,20 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     await rejects(fns.reviewChangeRequest({order_id: 'o1', decision: 'maybe'}, ctx('admin')), 'invalid-argument', 'bad decision');
     const ok = await fns.reviewChangeRequest({order_id: 'o1', decision: 'approve', note: 'تم التحقق'}, ctx('admin'));
     assert.strictEqual(ok.status, 'approved');
-    assert.strictEqual(db.store.get('users/cust').wallet_balance, 20000);
-    assert.strictEqual(db.store.get('courier_wallets/cour').debt, 20000, 'courier owes the cash he kept');
+    assert.strictEqual(db.store.get('users/cust').wallet_balance, 200);
+    assert.strictEqual(db.store.get('courier_wallets/cour').debt, 200, 'courier owes the cash he kept');
     assert.ok(db.store.get('users/cust/wallet_ledger/change_o1') && db.store.get('courier_wallets/cour/ledger/change_o1'));
     assert.strictEqual([...db.store.keys()].filter((k) => k.startsWith('financial_ledger/')).length, 1);
     assert.strictEqual(db.store.get('change_requests/o1').status, 'approved');
     await rejects(fns.reviewChangeRequest({order_id: 'o1', decision: 'approve'}, ctx('admin')), 'failed-precondition', 'double approve');
-    assert.strictEqual(db.store.get('users/cust').wallet_balance, 20000, 'no double credit');
+    assert.strictEqual(db.store.get('users/cust').wallet_balance, 200, 'no double credit');
 
-    put('orders/o5', delivered({cash_change_for: 40000}));
+    put('orders/o5', delivered({cash_change_for: 400}));
     await fns.requestChangeToWallet({order_id: 'o5'}, ctx('cour'));
     const rj = await fns.reviewChangeRequest({order_id: 'o5', decision: 'reject', note: 'غير صحيح'}, ctx('admin'));
-    assert.strictEqual(rj.status, 'rejected'); assert.strictEqual(db.store.get('users/cust').wallet_balance, 20000, 'reject credits nothing');
+    assert.strictEqual(rj.status, 'rejected'); assert.strictEqual(db.store.get('users/cust').wallet_balance, 200, 'reject credits nothing');
 
-    put('orders/o6', delivered({cash_due: 5000, cash_change_for: 100000}));
+    put('orders/o6', delivered({cash_due: 50, cash_change_for: 1000}));
     const manual = await fns.requestChangeToWallet({order_id: 'o6'}, ctx('cour'));
     assert.strictEqual(manual.status, 'pending');
     assert.strictEqual(manual.needs_manual_review, true, 'large change remains reviewable');

@@ -2,7 +2,7 @@ const assert = require('assert');
 const {customerReferralDefaults} = require('../functions/referral-profile');
 
 const preset = {
-  wallet_balance: 87500,
+  wallet_balance: 875,
   loyalty_points: 42,
   referral_code: 'PRESET42',
   referral_rewarded: true,
@@ -23,9 +23,9 @@ assert.deepStrictEqual(missing, {
 }, 'missing referral fields must receive safe defaults');
 assert.deepStrictEqual({...missing, ...customerReferralDefaults(missing, 'OTHER')}, missing, 'defaults must remain stable on replay');
 
-const partialSource = {wallet_balance: 1200, loyalty_points: 7};
+const partialSource = {wallet_balance: 12, loyalty_points: 7};
 const partial = {...partialSource, ...customerReferralDefaults(partialSource, 'PARTIAL')};
-assert.strictEqual(partial.wallet_balance, 1200);
+assert.strictEqual(partial.wallet_balance, 12);
 assert.strictEqual(partial.loyalty_points, 7);
 assert.strictEqual(partial.referral_code, 'PARTIAL');
 assert.strictEqual(partial.referral_rewarded, false);

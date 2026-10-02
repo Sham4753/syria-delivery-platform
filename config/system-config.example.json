@@ -4,7 +4,10 @@
   "currency": "SYP",
   "support_phone": "",
   "environment": "production",
-  "default_delivery_fee": 10000,
+  "default_delivery_fee": 100,
+  "loyalty_points_rate": 1,
+  "loyalty_point_value": 0.1,
+  "loyalty_points_divisor": 10,
   "default_opening_hours": { "open": "09:00", "close": "23:00" },
   "payment_settings": {
     "bank_transfer": {
