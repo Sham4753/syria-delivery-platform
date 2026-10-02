@@ -41,9 +41,9 @@ const firebaseWebOptions = FirebaseOptions(
   apiKey: String.fromEnvironment('FIREBASE_API_KEY') == '' && useFirebaseEmulators ? 'demo-api-key' : String.fromEnvironment('FIREBASE_API_KEY'),
   appId: String.fromEnvironment('FIREBASE_APP_ID') == '' && useFirebaseEmulators ? '1:000000000000:web:demo' : String.fromEnvironment('FIREBASE_APP_ID'),
   messagingSenderId: String.fromEnvironment('FIREBASE_MESSAGING_SENDER_ID') == '' && useFirebaseEmulators ? '000000000000' : String.fromEnvironment('FIREBASE_MESSAGING_SENDER_ID'),
-  projectId: String.fromEnvironment('FIREBASE_PROJECT_ID') == '' && useFirebaseEmulators ? 'demo-syria-delivery' : String.fromEnvironment('FIREBASE_PROJECT_ID'),
-  authDomain: String.fromEnvironment('FIREBASE_AUTH_DOMAIN') == '' && useFirebaseEmulators ? 'demo-syria-delivery.firebaseapp.com' : String.fromEnvironment('FIREBASE_AUTH_DOMAIN'),
-  storageBucket: String.fromEnvironment('FIREBASE_STORAGE_BUCKET') == '' && useFirebaseEmulators ? 'demo-syria-delivery.appspot.com' : String.fromEnvironment('FIREBASE_STORAGE_BUCKET'),
+  projectId: String.fromEnvironment('FIREBASE_PROJECT_ID') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed' : String.fromEnvironment('FIREBASE_PROJECT_ID'),
+  authDomain: String.fromEnvironment('FIREBASE_AUTH_DOMAIN') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.firebaseapp.com' : String.fromEnvironment('FIREBASE_AUTH_DOMAIN'),
+  storageBucket: String.fromEnvironment('FIREBASE_STORAGE_BUCKET') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.appspot.com' : String.fromEnvironment('FIREBASE_STORAGE_BUCKET'),
 );
 Future<void> initializeFirebaseApp() async {
   if (Firebase.apps.isNotEmpty) return;

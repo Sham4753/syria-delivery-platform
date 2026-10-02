@@ -162,9 +162,9 @@ const firebaseWebOptions = FirebaseOptions(
   apiKey: firebaseApiKey == '' && useFirebaseEmulators ? 'demo-api-key' : firebaseApiKey,
   appId: firebaseAppId == '' && useFirebaseEmulators ? '1:000000000000:web:demo' : firebaseAppId,
   messagingSenderId: firebaseMessagingSenderId == '' && useFirebaseEmulators ? '000000000000' : firebaseMessagingSenderId,
-  projectId: firebaseProjectId == '' && useFirebaseEmulators ? 'demo-syria-delivery' : firebaseProjectId,
-  authDomain: firebaseAuthDomain == '' && useFirebaseEmulators ? 'demo-syria-delivery.firebaseapp.com' : firebaseAuthDomain,
-  storageBucket: firebaseStorageBucket == '' && useFirebaseEmulators ? 'demo-syria-delivery.appspot.com' : firebaseStorageBucket,
+  projectId: firebaseProjectId == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed' : firebaseProjectId,
+  authDomain: firebaseAuthDomain == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.firebaseapp.com' : firebaseAuthDomain,
+  storageBucket: firebaseStorageBucket == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.appspot.com' : firebaseStorageBucket,
 );
 
 Future<void> initializeFirebaseApp() async {

@@ -1,9 +1,18 @@
-﻿name: Flutter Android Release
+﻿name: Build Android Apps
 
 on:
   workflow_dispatch:
+    inputs:
+      build_mode:
+        description: 'Build type (debug works without signing secrets)'
+        required: true
+        default: debug
+        type: choice
+        options:
+          - debug
+          - release
   push:
-    branches: [main, 'fix/**']
+    branches: [main]
     paths:
       - 'customer_app/**'
       - 'merchant_app/**'
@@ -18,9 +27,11 @@ on:
 
 env:
   FLUTTER_VERSION: stable
+  FIREBASE_PROJECT_ID: syria-delivery-2026-majed
 
 jobs:
   build:
+    name: ${{ matrix.name }} Android APK
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -34,93 +45,79 @@ jobs:
             dir: courier_app
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Flutter dependencies
+      - name: Dependencies
         working-directory: ${{ matrix.dir }}
         run: flutter pub get
 
-      - name: Format report
-        working-directory: ${{ matrix.dir }}
-        run: dart format --output=none lib
-
       - name: Analyze
         working-directory: ${{ matrix.dir }}
-        run: |
-          set +e
-          flutter analyze 2>&1 | tee /tmp/flutter-analyze.log
-          analyzer_status=${PIPESTATUS[0]}
-
-          if grep -qE '(^|[[:space:]])error •' /tmp/flutter-analyze.log; then
-            echo "Dart analyzer reported real errors."
-            exit 1
-          fi
-
-          if [ "$analyzer_status" -ne 0 ]; then
-            echo "Analyzer returned non-zero only for infos/warnings; continuing."
-          fi
+        run: flutter analyze
 
       - name: Tests
         working-directory: ${{ matrix.dir }}
         run: |
-          if [ -d test ]; then
-            flutter test
-          else
-            echo "No test directory for $PWD; skipping tests."
-          fi
+          if [ -d test ]; then flutter test; else echo "No Flutter tests; skipping."; fi
 
-      - name: Decode release keystore
+      - name: Decode release signing files
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release') }}
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        working-directory: ${{ matrix.dir }}
         run: |
-          test -n "$KEYSTORE_B64"
-          echo "$KEYSTORE_B64" | base64 --decode > "${{ matrix.dir }}/android/app/mimoapp-release.jks"
-
-          cat > "${{ matrix.dir }}/android/key.properties" <<EOF
+          test -n "$KEYSTORE_B64" || (echo 'Missing Android signing secrets.' && exit 1)
+          echo "$KEYSTORE_B64" | base64 --decode > android/app/mimoapp-release.jks
+          cat > android/key.properties <<EOF
           storeFile=mimoapp-release.jks
           storePassword=$STORE_PASSWORD
           keyPassword=$KEY_PASSWORD
           keyAlias=$KEY_ALIAS
           EOF
 
-      - name: Build signed AAB
+      - name: Build debug APK
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode == 'debug' }}
         working-directory: ${{ matrix.dir }}
-        run: flutter build appbundle --release --build-number=${{ github.run_number }}
+        run: flutter build apk --debug --build-number=${{ github.run_number }}
 
-      - name: Build signed universal APK
+      - name: Build signed release APK and AAB
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release' }}
         working-directory: ${{ matrix.dir }}
-        run: flutter build apk --release --build-number=${{ github.run_number }}
+        run: |
+          flutter build apk --release --build-number=${{ github.run_number }}
+          flutter build appbundle --release --build-number=${{ github.run_number }}
 
-      - name: Prepare release artifacts
+      - name: Collect APK artifact
         working-directory: ${{ matrix.dir }}
-        shell: bash
         run: |
           mkdir -p build/release-artifacts
-
-          cp build/app/outputs/bundle/release/*.aab \
-            "build/release-artifacts/mimoapp-${{ matrix.name }}-${{ github.run_number }}.aab"
-
-          cp build/app/outputs/flutter-apk/app-release.apk \
-            "build/release-artifacts/mimoapp-${{ matrix.name }}-${{ github.run_number }}.apk"
-
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.build_mode }}" = "release" ]; then
+            cp build/app/outputs/flutter-apk/app-release.apk build/release-artifacts/syria-delivery-${{ matrix.name }}-release.apk
+            cp build/app/outputs/bundle/release/*.aab build/release-artifacts/syria-delivery-${{ matrix.name }}-release.aab
+          else
+            cp build/app/outputs/flutter-apk/app-debug.apk build/release-artifacts/syria-delivery-${{ matrix.name }}-debug.apk
+          fi
           ls -lh build/release-artifacts
 
-      - name: Upload AAB and APK artifacts
+      - name: Upload APK/AAB
         uses: actions/upload-artifact@v4
         with:
-          name: mimoapp-${{ matrix.name }}-${{ github.run_number }}
+          name: android-apks-${{ matrix.name }}
           path: ${{ matrix.dir }}/build/release-artifacts/*
           if-no-files-found: error

@@ -3,23 +3,10 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Syria Delivery - One Click Launcher
 
-rem Release processes from previous local Syria Delivery sessions.
-taskkill /F /IM node.exe /T >nul 2>&1
-taskkill /F /IM dart.exe /T >nul 2>&1
-taskkill /F /IM firebase.exe /T >nul 2>&1
-timeout /t 1 /nobreak >nul
-
 set "FIRESTORE_PORT=8080"
 set "AUTH_PORT=9099"
 set "HUB_PORT=4400"
 set "ADMIN_PORT=5173"
-
-rem Release known service ports if a stale process still owns one.
-for %%P in (%FIRESTORE_PORT% %AUTH_PORT% %HUB_PORT% %ADMIN_PORT%) do (
-  for /f "tokens=5" %%Q in ('netstat -ano ^| findstr ":%%P " ^| findstr LISTENING') do (
-    if not "%%Q"=="0" taskkill /F /PID %%Q /T >nul 2>&1
-  )
-)
 
 rem Choose the first free Vite port, starting at 5173.
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports=5173..5183; foreach($p in $ports){$c=New-Object Net.Sockets.TcpClient; try{$c.Connect('127.0.0.1',$p)}catch{Write-Output $p; break}finally{$c.Dispose()}}"`) do set "ADMIN_PORT=%%P"
@@ -57,10 +44,10 @@ if not exist admin-dashboard\node_modules (
 
 set "FIRESTORE_EMULATOR_HOST=127.0.0.1:%FIRESTORE_PORT%"
 set "FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:%AUTH_PORT%"
-set "GCLOUD_PROJECT=demo-syria-delivery"
+set "GCLOUD_PROJECT=syria-delivery-2026-majed"
 set "PROJECT_ROOT=%~dp0"
 
-start "Syria Delivery - Firebase Emulator" /D "%PROJECT_ROOT%" cmd /k "firebase emulators:start --only auth,firestore,functions"
+start "Syria Delivery - Firebase Emulator" /D "%PROJECT_ROOT%" cmd /k "firebase emulators:start --project syria-delivery-2026-majed --only auth,firestore,functions"
 
 echo Waiting for Firestore, Auth, and Functions emulators...
 set /a WAIT_COUNT=0

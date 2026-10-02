@@ -1,17 +1,26 @@
-# customer_app
+# Customer App
 
-A new Flutter project.
+تطبيق العميل لمنصة Syria Delivery.
 
-## Getting Started
+## الوظائف
 
-This project is a starting point for a Flutter application.
+تسجيل الدخول، عرض المزودين والمنتجات، العناوين، السلة والطلب، التتبع، الدردشة، المحفظة والكوبونات.
 
-A few resources to get you started if this is your first Flutter project:
+## تشغيل محلي
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+من جذر المستودع شغّل Firebase Emulator ثم:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```powershell
+flutter pub get
+flutter run -d chrome --dart-define=USE_FIREBASE_EMULATORS=true --dart-define=EMULATOR_HOST=127.0.0.1 --dart-define=FIREBASE_PROJECT_ID=syria-delivery-2026-majed
+```
+
+على Android Emulator استخدم `EMULATOR_HOST=10.0.2.2`.
+
+## البناء
+
+```powershell
+flutter build apk --debug
+```
+
+المعرّف Android الحالي: `com.mycompany.mimoapp`، وهو المعرّف المسجل في ملف Firebase لهذا التطبيق. لا تغيّره دون تسجيل تطبيق Android جديد في Firebase وتحديث `google-services.json`.

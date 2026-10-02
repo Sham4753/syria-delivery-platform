@@ -6,8 +6,8 @@ command -v node >/dev/null || { echo 'Node.js غير مثبت.'; exit 1; }
 if [ ! -d functions/node_modules ]; then (cd functions && npm install); fi
 export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
 export FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
-export GCLOUD_PROJECT=demo-syria-delivery
-firebase emulators:start --only auth,firestore,functions > .emulator.log 2>&1 &
+export GCLOUD_PROJECT=syria-delivery-2026-majed
+firebase emulators:start --project syria-delivery-2026-majed --only auth,firestore,functions > .emulator.log 2>&1 &
 EMULATOR_PID=$!
 cleanup() { kill "$EMULATOR_PID" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM

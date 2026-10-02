@@ -1,14 +1,17 @@
 # Merchant App — Syria Delivery
 
-تطبيق التاجر/المتجر المبني بـ Flutter وFirebase. يوفر استقبال الطلبات وقبولها أو رفضها، تحديد زمن التحضير، وضع المشغول، إدارة توفر أصناف المنيو، وتقارير المبيعات والعمولات.
+تطبيق التاجر/المطعم/الصيدلية/البقالة المبني بـ Flutter وFirebase. يوفر استقبال الطلبات وقبولها أو رفضها، تحديد زمن التحضير، وضع المشغول، إدارة توفر أصناف المنيو، وتقارير المبيعات والعمولات.
 
 ## الإعداد
 
-```bash
+```powershell
 flutter pub get
-flutterfire configure
-flutter run
+flutter run -d chrome --dart-define=USE_FIREBASE_EMULATORS=true --dart-define=EMULATOR_HOST=127.0.0.1 --dart-define=FIREBASE_PROJECT_ID=syria-delivery-2026-majed
 ```
+
+على Android Emulator استخدم `EMULATOR_HOST=10.0.2.2`. للبناء: `flutter build apk --debug`.
+
+المعرّف Android: `com.syria.delivery.merchant`.
 
 فعّل Email/Password في Firebase Authentication. أنشئ مستخدمًا من Firebase Console ثم أنشئ `users/{uid}` من Firestore Console بالقيمتين:
 

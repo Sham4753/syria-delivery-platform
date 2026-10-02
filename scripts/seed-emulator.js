@@ -7,7 +7,7 @@ if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_
   process.exit(1);
 }
 
-admin.initializeApp({ projectId: 'demo-syria-delivery' });
+admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'syria-delivery-2026-majed' });
 const db = admin.firestore();
 const auth = admin.auth();
 const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, 'syria-business-fixtures.json'), 'utf8'));

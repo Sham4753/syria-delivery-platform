@@ -13,9 +13,9 @@ const value = (key, fallback = '') => String(env[key] || fallback).trim()
 
 const firebaseConfig = {
   apiKey: value('VITE_FIREBASE_API_KEY', allowDemoConfig ? 'demo-api-key' : ''),
-  authDomain: value('VITE_FIREBASE_AUTH_DOMAIN', allowDemoConfig ? 'demo-syria-delivery.firebaseapp.com' : ''),
-  projectId: value('VITE_FIREBASE_PROJECT_ID', allowDemoConfig ? 'demo-syria-delivery' : ''),
-  storageBucket: value('VITE_FIREBASE_STORAGE_BUCKET', allowDemoConfig ? 'demo-syria-delivery.appspot.com' : ''),
+  authDomain: value('VITE_FIREBASE_AUTH_DOMAIN', allowDemoConfig ? 'syria-delivery-2026-majed.firebaseapp.com' : ''),
+  projectId: value('VITE_FIREBASE_PROJECT_ID', allowDemoConfig ? 'syria-delivery-2026-majed' : ''),
+  storageBucket: value('VITE_FIREBASE_STORAGE_BUCKET', allowDemoConfig ? 'syria-delivery-2026-majed.appspot.com' : ''),
   messagingSenderId: value('VITE_FIREBASE_MESSAGING_SENDER_ID', allowDemoConfig ? '000000000000' : ''),
   appId: value('VITE_FIREBASE_APP_ID', allowDemoConfig ? '1:000000000000:web:demo' : ''),
 }

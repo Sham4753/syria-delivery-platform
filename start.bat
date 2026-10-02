@@ -13,8 +13,8 @@ if not exist functions\node_modules\firebase-admin (
 )
 set "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080"
 set "FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099"
-set "GCLOUD_PROJECT=demo-syria-delivery"
-start "Syria Delivery Firebase Emulator" cmd /k "cd /d %~dp0 && firebase emulators:start --only auth,firestore,functions"
+set "GCLOUD_PROJECT=syria-delivery-2026-majed"
+start "Syria Delivery Firebase Emulator" cmd /k "cd /d %~dp0 && firebase emulators:start --project syria-delivery-2026-majed --only auth,firestore,functions"
 echo انتظار جاهزية المحاكي فعليًا على المنفذ 8080 (حد أقصى 90 ثانية)...
 set /a WAIT_COUNT=0
 :wait_loop

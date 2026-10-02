@@ -9,7 +9,7 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 const admin = require(path.join('..', 'functions', 'node_modules', 'firebase-admin'));
 
 if (admin.apps.length === 0) {
-  admin.initializeApp({projectId: process.env.GCLOUD_PROJECT || 'demo-syria-delivery'});
+  admin.initializeApp({projectId: process.env.GCLOUD_PROJECT || 'syria-delivery-2026-majed'});
 }
 
 const db = admin.firestore();
