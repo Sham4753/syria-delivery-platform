@@ -242,6 +242,31 @@ exports.getMerchantReports = onCall(async (data, context) => {
     throw error;
   }
 });
+exports.getVendorRatings = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  const profile = await requireRole(context.auth.uid, ['super_admin', ...VENDOR_ROLES]);
+  const vendorId = String(data?.vendor_id || profile.vendor_id || '').trim();
+  if (!vendorId) throw new HttpsError('invalid-argument', 'معرّف المتجر مطلوب');
+  if (profile.role !== 'super_admin' && profile.vendor_id !== vendorId) {
+    throw new HttpsError('permission-denied', 'لا تملك صلاحية هذا المتجر');
+  }
+  const [vendorSnap, ratingsSnap] = await Promise.all([
+    db.doc(`vendors/${vendorId}`).get(),
+    db.collection('ratings').where('vendor_id', '==', vendorId).limit(50).get(),
+  ]);
+  const ratings = ratingsSnap.docs.map((doc) => ({id: doc.id, ...doc.data()}))
+    .sort((a, b) => (b.updated_at?.toMillis?.() || 0) - (a.updated_at?.toMillis?.() || 0))
+    .map((item) => ({
+      id: item.id,
+      order_id: String(item.order_id || item.id),
+      customer_id: String(item.customer_id || ''),
+      courier_id: item.courier_id || null,
+      vendor_rating: Number(item.vendor_rating || 0),
+      comment: item.comment || null,
+    }));
+  const vendor = vendorSnap.data() || {};
+  return {average: Number(vendor.rating_average || 0), count: Number(vendor.rating_count || 0), ratings};
+});
 
 const CONFIG_LIMITS = {
   app_name: {type: 'string', max: 80}, currency: {type: 'string', max: 8}, support_phone: {type: 'string', max: 32},

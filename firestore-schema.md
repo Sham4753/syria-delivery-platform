@@ -153,4 +153,4 @@ Orders with `fulfillment_type: "errand"` use `pickup_address`, `delivery_address
 
 تُحفظ تقييمات الطلب في `ratings/{orderId}` بعد التسليم فقط، وتحتوي `vendor_rating` و`courier_rating?` و`comment?` مع هوية الطلب والعميل. الكتابة لا تتم من العميل مباشرة؛ الدالة `submitRating` تتحقق من ملكية الطلب وحالة `delivered` ومدى النجوم، وتسمح بتعديل التقييم مع تحديث المتوسطات ذريًا.
 
-يُحدّث الخادم `rating_sum`, `rating_count`, و`rating_average` في `vendors/{vendorId}` و`couriers/{courierId}`، ويُمرر متوسط المتجر إلى `public_vendors` لعرضه في قائمة العميل. العميل يرى واجهة التقييم بعد التسليم، التاجر يرى متوسط التقييم والملاحظات، والسائق يرى متوسطه وعدد التقييمات، بينما يراجع الأدمن كل التقييمات من صفحة مستقلة.
+يُحدّث الخادم `rating_sum`, `rating_count`, و`rating_average` في `vendors/{vendorId}` و`couriers/{courierId}`، ويُمرر متوسط المتجر إلى `public_vendors` لعرضه في قائمة العميل. العميل يرى واجهة التقييم بعد التسليم، التاجر يرى متوسط التقييم والملاحظات عبر `getVendorRatings` المقيدة بصلاحية متجره وبحد أقصى 50 سجلًا، والسائق يرى متوسطه وعدد التقييمات، بينما يراجع الأدمن كل التقييمات من صفحة مستقلة.

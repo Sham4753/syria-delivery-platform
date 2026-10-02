@@ -380,15 +380,19 @@ class _RatingEditorState extends State<RatingEditor> {
   }
 
   Future<void> _load() async {
-    final snapshot = await FirebaseFirestore.instance.collection('ratings').doc(widget.orderId).get();
-    final data = snapshot.data() as Map<String, dynamic>?;
-    if (!mounted) return;
-    setState(() {
-      vendorRating = (data?['vendor_rating'] as num?)?.toInt() ?? 0;
-      courierRating = (data?['courier_rating'] as num?)?.toInt() ?? 0;
-      comment.text = '${data?['comment'] ?? ''}';
-      loading = false;
-    });
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('ratings').doc(widget.orderId).get();
+      final data = snapshot.data() as Map<String, dynamic>?;
+      if (!mounted) return;
+      setState(() {
+        vendorRating = (data?['vendor_rating'] as num?)?.toInt() ?? 0;
+        courierRating = (data?['courier_rating'] as num?)?.toInt() ?? 0;
+        comment.text = '${data?['comment'] ?? ''}';
+        loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   Widget _stars(String label, int value, ValueChanged<int> onChanged) => Padding(

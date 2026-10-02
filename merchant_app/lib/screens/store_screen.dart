@@ -555,17 +555,24 @@ class _MerchantHomeState extends State<MerchantHome> {
         ),
       );
 
-  Widget _ratingSummary() => StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('ratings').where('vendor_id', isEqualTo: widget.vendorId).limit(50).snapshots(),
+  Widget _ratingSummary() => FutureBuilder<Map<String, dynamic>>(
+        future: appFunctions.httpsCallable('getVendorRatings').call({'vendor_id': widget.vendorId}).then((result) => Map<String, dynamic>.from(result.data as Map)),
         builder: (context, snapshot) {
-          final docs = snapshot.data?.docs ?? [];
-          final values = docs.map((doc) => ((doc.data() as Map<String, dynamic>)['vendor_rating'] as num?)?.toDouble() ?? 0).where((value) => value > 0).toList();
-          final average = values.isEmpty ? 0 : values.reduce((a, b) => a + b) / values.length;
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Card(child: Padding(padding: EdgeInsets.all(14), child: LinearProgressIndicator()));
+          }
+          if (snapshot.hasError) {
+            return const Card(child: ListTile(title: Text('تعذر تحميل تقييمات العملاء'), subtitle: Text('تحقق من الاتصال ثم أعد فتح التقرير.')));
+          }
+          final data = snapshot.data ?? <String, dynamic>{};
+          final ratings = (data['ratings'] as List? ?? []).whereType<Map>().toList();
+          final average = (data['average'] as num?)?.toDouble() ?? 0;
+          final count = (data['count'] as num?)?.toInt() ?? 0;
           return Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('تقييمات العملاء', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
-            Row(children: [Icon(Icons.star, color: Colors.amber.shade700), const SizedBox(width: 6), Text('${average.toStringAsFixed(1)} / 5 — ${values.length} تقييم')]),
-            ...docs.take(3).map((doc) { final item = doc.data() as Map<String, dynamic>; return ListTile(contentPadding: EdgeInsets.zero, dense: true, title: Text('المتجر: ${item['vendor_rating'] ?? 0} نجوم  •  السائق: ${item['courier_rating'] ?? '—'}'), subtitle: Text('${item['comment'] ?? 'بدون ملاحظة'}')); }),
+            Row(children: [Icon(Icons.star, color: Colors.amber.shade700), const SizedBox(width: 6), Text('${average.toStringAsFixed(1)} / 5 — $count تقييم')]),
+            ...ratings.take(3).map((item) => ListTile(contentPadding: EdgeInsets.zero, dense: true, title: Text('المتجر: ${item['vendor_rating'] ?? 0} نجوم'), subtitle: Text('${item['comment'] ?? 'بدون ملاحظة'}'))),
           ])));
         },
       );

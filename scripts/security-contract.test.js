@@ -65,7 +65,7 @@ assert(/match \/public_vendors\/{vendorId}/.test(rules), 'public vendor projecti
 assert(/match \/system_config\/{configId} \{ allow read: if admin\(\);/.test(rules) && /match \/public_config\/{configId} \{ allow read: if configId == 'main';/.test(rules), 'private config must be admin-only and public projection limited to main');
 assert(/allow read: if resource\.data\.is_available == true \|\| admin\(\) \|\| vendorOwner\(vendorId\)/.test(rules), 'available products must be browsable by guests');
 assert(/match \/wallet_topups\/{topupId} \{ allow read: if signedIn\(\) && resource\.data\.customer_id == request\.auth\.uid; allow create: if false;/.test(rules), 'wallet topups must be callable-only');
-assert(/role\('customer'\).*request\.resource\.data\.customer_id == request\.auth\.uid/.test(rules), 'ratings must be created by customers only');
+assert(/match \/ratings\/{ratingId}/.test(rules) && /allow create, update, delete: if false/.test(rules) && /exports\.submitRating/.test(functions), 'ratings must be written only through the validated server callable');
 assert(/collection\('public_vendors'\)/.test(customer), 'customer must read sanitized public vendor catalog');
 assert(!/defaultValue: true/.test(customer.match(/const useFirebaseEmulators[\s\S]{0,160}/)?.[0] || ''), 'production must not default to Firebase emulators');
 assert(/instanceFor\(region: 'europe-west1'\)/.test(customer) && /instanceFor\(region: 'europe-west1'\)/.test(courier) && /instanceFor\(region: 'europe-west1'\)/.test(merchant), 'Flutter clients must target the deployed europe-west1 Functions region');
