@@ -419,7 +419,7 @@ class OrdersHistoryPage extends StatelessWidget {
                   : order.id;
               return Card(
                 child: ListTile(
-                  title: Text('طلب #$shortId — ${data['total'] ?? 0} ل.س'),
+                  title: Text('طلب #$shortId — ${formatMoney(data['total'])}'),
                   subtitle: Text('الحالة: ${data['status'] ?? 'pending'}'),
                   trailing: TextButton(
                     onPressed: () => reorder(context, order),

@@ -288,7 +288,7 @@ class _MerchantHomeState extends State<MerchantHome> {
           ...items.map((item) => Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Text('${item['quantity'] ?? 1} × ${item['name'] ?? 'صنف'}', style: const TextStyle(fontSize: 16)))),
           if ((data['notes'] ?? '').toString().isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text('ملاحظة: ${data['notes']}', style: const TextStyle(color: Colors.deepOrange))),
           const SizedBox(height: 8),
-          Row(children: [Text('${data['total'] ?? 0} ل.س'), const Spacer(), if (status == 'pending') FilledButton(onPressed: () => updateOrder(doc.id, 'preparing', prepMinutes: (data['prep_minutes'] as num?)?.toInt() ?? 20), child: const Text('قبول وتحضير')), if (status == 'preparing') FilledButton(onPressed: () => updateOrder(doc.id, 'ready_for_pickup'), child: const Text('جاهز للاستلام'))]),
+          Row(children: [Text(formatMoney(data['total'])), const Spacer(), if (status == 'pending') FilledButton(onPressed: () => updateOrder(doc.id, 'preparing', prepMinutes: (data['prep_minutes'] as num?)?.toInt() ?? 20), child: const Text('قبول وتحضير')), if (status == 'preparing') FilledButton(onPressed: () => updateOrder(doc.id, 'ready_for_pickup'), child: const Text('جاهز للاستلام'))]),
         ]),
       ),
     );
@@ -326,7 +326,7 @@ class _MerchantHomeState extends State<MerchantHome> {
           return Card(
             child: ListTile(
               title: Text(
-                'طلب #${d.id.substring(0, 6)} — ${x['total'] ?? 0} ل.س',
+                'طلب #${d.id.substring(0, 6)} — ${formatMoney(x['total'])}',
               ),
               subtitle: Text(
                 'الحالة: $status\nالدفع: ${x['payment_method'] ?? 'cash_on_delivery'}',
@@ -397,7 +397,7 @@ class _MerchantHomeState extends State<MerchantHome> {
                       ),
                 title: Text(x['name'] ?? ''),
                 subtitle: Text(
-                  '${x['category'] ?? 'عام'} — ${x['price'] ?? 0} ل.س — $modifiers خيارات',
+                  '${x['category'] ?? 'عام'} — ${formatMoney(x['price'])} — $modifiers خيارات',
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -548,10 +548,10 @@ class _MerchantHomeState extends State<MerchantHome> {
     return Map<String, dynamic>.from(result.data as Map);
   }
 
-  Widget _reportMetric(String title, Object? value, {String suffix = ' ل.س'}) => Card(
+  Widget _reportMetric(String title, Object? value) => Card(
         child: ListTile(
           title: Text(title),
-          trailing: Text('$value$suffix', style: const TextStyle(fontWeight: FontWeight.bold)),
+          trailing: Text(formatMoney(value), style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
       );
 
@@ -626,7 +626,7 @@ class _MerchantHomeState extends State<MerchantHome> {
                       leading: CircleAvatar(child: Text('${entry.key + 1}')),
                       title: Text('${item['name'] ?? 'صنف'}'),
                       subtitle: Text('${item['quantity'] ?? 0} وحدة'),
-                      trailing: Text('${item['revenue'] ?? 0} ل.س'),
+                      trailing: Text(formatMoney(item['revenue'])),
                     ),
                   );
                 }),

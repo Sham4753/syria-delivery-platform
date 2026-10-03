@@ -16,6 +16,7 @@ Future<void> bootstrapMerchantApp() async {
     await connectToFirebaseEmulators();
     FirebaseFirestore.instance.settings = Settings(persistenceEnabled: true);
     await enableCrashlytics();
+    await loadSystemConfig();
   } catch (error) {
     startupError = error;
   }

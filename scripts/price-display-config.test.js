@@ -1,0 +1,10 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const source = fs.readFileSync(path.join(__dirname, '..', 'functions', 'index.js'), 'utf8');
+const schema = source.slice(source.indexOf('const CONFIG_LIMITS'), source.indexOf('const PUBLIC_CONFIG_KEYS'));
+const publicKeys = source.slice(source.indexOf('const PUBLIC_CONFIG_KEYS'), source.indexOf('function buildPublicSystemConfig'));
+assert(/price_display_mode: \{type: 'price_display_mode'\}/.test(schema), 'price_display_mode must be in config schema');
+assert(/\['new', 'new_with_old'\]\.includes\(value\)/.test(source), 'price_display_mode must allow only new and new_with_old');
+assert(/'price_display_mode'/.test(publicKeys), 'price_display_mode must be public');
+console.log('price_display_mode config schema tests passed');

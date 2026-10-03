@@ -61,7 +61,7 @@ class CustomerWalletPage extends StatelessWidget {
             Card(child: Padding(padding: const EdgeInsets.all(22), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Icon(Icons.account_balance_wallet_rounded, size: 34),
               const SizedBox(height: 10), const Text('الرصيد المتاح'),
-              Text('$balance ل.س', style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
+              Text(formatMoney(balance), style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
               const SizedBox(height: 14),
               Row(children: [Expanded(child: Text('نقاط الولاء: $points', style: const TextStyle(fontWeight: FontWeight.bold))), FilledButton.icon(onPressed: () => _showTopUp(context), icon: const Icon(Icons.add), label: const Text('شحن'))]),
             ]))),
@@ -74,7 +74,7 @@ class CustomerWalletPage extends StatelessWidget {
                 if (snapshot.data!.docs.isEmpty) return const Padding(padding: EdgeInsets.all(24), child: Text('لا توجد حركات بعد'));
                 return Column(children: snapshot.data!.docs.map((doc) {
                   final item = doc.data() as Map<String, dynamic>;
-                  return ListTile(leading: const Icon(Icons.receipt_long), title: Text(item['label'] ?? 'حركة محفظة'), trailing: Text('${item['amount'] ?? item['points'] ?? 0} ${item['unit'] ?? 'ل.س'}'));
+                  return ListTile(leading: const Icon(Icons.receipt_long), title: Text(item['label'] ?? 'حركة محفظة'), trailing: Text(item['unit'] == 'ل.س' ? formatMoney(item['amount'] ?? 0) : '${item['points'] ?? 0} ${item['unit'] ?? ''}'));
                 }).toList());
               },
             ),
@@ -122,10 +122,10 @@ Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<Str
       builder: (context, setState) => Padding(
         padding: EdgeInsets.only(left: 18, right: 18, top: 18, bottom: MediaQuery.of(context).viewInsets.bottom + 18),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('اختيار الدفع — $total ل.س', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text('اختيار الدفع — ${formatMoney(total)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           RadioListTile<String>(value: 'cash_on_delivery', groupValue: method, onChanged: (String? value) => setState(() => method = value ?? method), title: const Text('كاش عند الاستلام')),
           if (method == 'cash_on_delivery') TextField(decoration: const InputDecoration(labelText: 'الفئة النقدية'), keyboardType: TextInputType.number, onChanged: (value) => cashChange = num.tryParse(value) ?? 0),
-          RadioListTile<String>(value: 'wallet', groupValue: method, onChanged: balance >= total ? (String? value) => setState(() { method = value ?? method; wallet = total; }) : null, title: Text('المحفظة — $balance ل.س')),
+          RadioListTile<String>(value: 'wallet', groupValue: method, onChanged: balance >= total ? (String? value) => setState(() { method = value ?? method; wallet = total; }) : null, title: Text('المحفظة — ${formatMoney(balance)}')),
           RadioListTile<String>(value: 'hybrid', groupValue: method, onChanged: balance > 0 || loyalty > 0 ? (String? value) => setState(() => method = value ?? method) : null, title: const Text('دفع جزئي + كاش')),
           if (bankTransferEnabled) RadioListTile<String>(value: 'bank_transfer', groupValue: method, onChanged: (String? value) => setState(() { method = value ?? method; wallet = 0; points = 0; cashChange = 0; }), title: Text('تحويل بنكي${bankName.isEmpty ? '' : ' — $bankName'}')),
           if (method == 'hybrid') Row(children: [

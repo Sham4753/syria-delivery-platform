@@ -22,6 +22,24 @@ export 'package:geolocator/geolocator.dart';
 export 'package:latlong2/latlong.dart' hide Path;
 export 'package:url_launcher/url_launcher.dart';
 
+String _priceDisplayMode = 'new';
+
+String _groupMoney(num value) {
+  final rounded = value.round().toString();
+  return rounded.replaceAllMapped(RegExp(r'(?<!^)(?=(\d{3})+$)'), (match) => ',');
+}
+
+String formatMoney(Object? value, {String? mode}) {
+  final number = value is num ? value.toDouble() : double.tryParse('${value ?? ''}') ?? 0;
+  final safe = number.isFinite ? number : 0;
+  final newAmount = _groupMoney(safe);
+  final displayMode = (mode ?? _priceDisplayMode).trim();
+  if (displayMode == 'new_with_old') {
+    return '$newAmount ل.س (${_groupMoney(safe * 100)} قديمة)';
+  }
+  return '$newAmount ل.س';
+}
+
 final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
 
 void installAppErrorHandlers(String appName) {
@@ -52,6 +70,15 @@ const firebaseWebOptions = FirebaseOptions(
   authDomain: String.fromEnvironment('FIREBASE_AUTH_DOMAIN') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.firebaseapp.com' : String.fromEnvironment('FIREBASE_AUTH_DOMAIN'),
   storageBucket: String.fromEnvironment('FIREBASE_STORAGE_BUCKET') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.appspot.com' : String.fromEnvironment('FIREBASE_STORAGE_BUCKET'),
 );
+Future<void> loadSystemConfig() async {
+  try {
+    final snapshot = await FirebaseFirestore.instance.collection('public_config').doc('main').get();
+    final data = snapshot.data() ?? <String, dynamic>{};
+    _priceDisplayMode = (data['price_display_mode'] ?? '').toString().trim() == 'new_with_old' ? 'new_with_old' : 'new';
+  } catch (_) {
+    _priceDisplayMode = 'new';
+  }
+}
 Future<void> initializeFirebaseApp() async {
   if (Firebase.apps.isNotEmpty) return;
   if (kIsWeb) {

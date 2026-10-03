@@ -52,15 +52,13 @@ class _ErrandPageState extends State<ErrandPage> {
             'dropoff_address': dropoffAddress,
           });
       final quotedFee = quote.data['delivery_fee'];
-      final formattedFee = quotedFee is num
-          ? quotedFee.toStringAsFixed(0)
-          : quotedFee.toString();
+      final formattedFee = formatMoney(quotedFee);
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('تأكيد رسم التوصيل'),
-          content: Text('الرسم المحسوب من الخادم: $formattedFee ل.س'),
+          content: Text('الرسم المحسوب من الخادم: $formattedFee'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),

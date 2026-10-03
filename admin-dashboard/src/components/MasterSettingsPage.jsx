@@ -12,7 +12,7 @@ const defaults = {
   featured_vendor_ids: [], free_delivery_vendor_ids: [], surge_enabled: false, surge_multiplier: 1,
   batching_enabled: false, max_batch_orders: 2, loyalty_points_rate: 0, loyalty_points_divisor: 10, loyalty_point_value: 0,
   courier_min_withdrawal: 0, merchant_min_withdrawal: 0, low_bandwidth_mode: false,
-  min_order_amount: 0, primary_color: '#0f766e', secondary_color: '#f59e0b',
+  price_display_mode: 'new', min_order_amount: 0, primary_color: '#0f766e', secondary_color: '#f59e0b',
   enable_google_auth: true, enable_facebook_auth: false, enable_whatsapp_otp: false, enable_guest_shopping: true,
   app_logo_url: '',
 }
@@ -110,6 +110,7 @@ export default function MasterSettingsPage() {
         <Field label="أقصى عدد للطلب المجمع" type="number" min="2" max="3" value={config.max_batch_orders || 2} onChange={e => update('max_batch_orders', Number(e.target.value))} />
         <Field label="معدل النقاط" type="number" min="0" value={config.loyalty_points_rate || 0} onChange={e => update('loyalty_points_rate', Number(e.target.value))} />
         <Field label="كل كم ليرة = نقاط الولاء" type="number" min="1" max="1000000" value={config.loyalty_points_divisor || 10} onChange={e => update('loyalty_points_divisor', Number(e.target.value))} />
+        <label className="field"><span>طريقة عرض الأسعار</span><select value={config.price_display_mode || 'new'} onChange={e => update('price_display_mode', e.target.value)}><option value="new">الأسعار الجديدة فقط</option><option value="new_with_old">الجديدة مع القديمة</option></select></label>
         <small className="map-help">مثال: طلب بـ 250 ل.س يمنح {Math.floor(250 / Math.max(1, Number(config.loyalty_points_divisor || 10)) * Number(config.loyalty_points_rate || 0))} نقطة</small>
         <Field label="قيمة النقطة" type="number" min="0" value={config.loyalty_point_value || 0} onChange={e => update('loyalty_point_value', Number(e.target.value))} />
         <Field label="حد سحب المندوب" type="number" min="0" value={config.courier_min_withdrawal || 0} onChange={e => update('courier_min_withdrawal', Number(e.target.value))} />

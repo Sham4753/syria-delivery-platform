@@ -38,7 +38,7 @@ class _ProductsPageState extends State<ProductsPage> {
         context: context,
         builder: (_) => AlertDialog(
           title: Text('إضافة ${modifier['name'] ?? ''}؟'),
-          content: Text('${modifier['price'] ?? 0} ل.س'),
+          content: Text(formatMoney(modifier['price'])),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('بدون')),
             FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إضافة')),
@@ -88,7 +88,7 @@ class _ProductsPageState extends State<ProductsPage> {
         discount = num.tryParse('${data['discount'] ?? 0}') ?? 0;
         deliveryFeePreview = num.tryParse('${data['delivery_fee'] ?? 0}') ?? 0;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم تطبيق الكوبون — الخصم $discount ل.س')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم تطبيق الكوبون — الخصم ${formatMoney(discount)}')));
     } on FirebaseFunctionsException catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'الكوبون غير صالح')));
     }
@@ -194,7 +194,7 @@ class _ProductsPageState extends State<ProductsPage> {
                   final key = cart.keys.firstWhere((k) => k.startsWith('${doc.id}-'), orElse: () => '');
                   final quantity = key.isEmpty ? 0 : (cart[key]!['quantity'] as int? ?? 0);
                   return Card(child: ListTile(
-                    title: Text(data['name'] ?? ''), subtitle: Text('${data['price'] ?? 0} ل.س'),
+                    title: Text(data['name'] ?? ''), subtitle: Text(formatMoney(data['price'])),
                     trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                       if (quantity > 0) IconButton(onPressed: () => setState(() { if (quantity == 1) cart.remove(key); else cart[key]!['quantity'] = quantity - 1; }), icon: const Icon(Icons.remove_circle_outline)),
                       Text('$quantity'), IconButton(onPressed: () => addProduct(doc.id, data), icon: const Icon(Icons.add_circle)),
@@ -207,8 +207,8 @@ class _ProductsPageState extends State<ProductsPage> {
           if (cart.isNotEmpty) Material(
             elevation: 12, color: Theme.of(context).colorScheme.primary,
             child: SafeArea(child: ListTile(
-              title: Text('${cart.values.fold<int>(0, (s, item) => s + (item['quantity'] as int? ?? 1))} أصناف  •  $subtotal ل.س', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              subtitle: discount > 0 ? Text('الخصم: $discount ل.س', style: const TextStyle(color: Colors.white70)) : null,
+              title: Text('${cart.values.fold<int>(0, (s, item) => s + (item['quantity'] as int? ?? 1))} أصناف  •  ${formatMoney(subtotal)}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              subtitle: discount > 0 ? Text('الخصم: ${formatMoney(discount)}', style: const TextStyle(color: Colors.white70)) : null,
               trailing: FilledButton(onPressed: checkout, child: const Text('إتمام الطلب')),
             )),
           ),

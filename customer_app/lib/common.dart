@@ -21,6 +21,24 @@ export 'package:flutter_map/flutter_map.dart';
 export 'package:latlong2/latlong.dart' hide Path;
 export 'package:url_launcher/url_launcher.dart';
 
+String _priceDisplayMode = 'new';
+
+String _groupMoney(num value) {
+  final rounded = value.round().toString();
+  return rounded.replaceAllMapped(RegExp(r'(?<!^)(?=(\d{3})+$)'), (match) => ',');
+}
+
+String formatMoney(Object? value, {String? mode}) {
+  final number = value is num ? value.toDouble() : double.tryParse('${value ?? ''}') ?? 0;
+  final safe = number.isFinite ? number : 0;
+  final newAmount = _groupMoney(safe);
+  final displayMode = (mode ?? _priceDisplayMode).trim();
+  if (displayMode == 'new_with_old') {
+    return '$newAmount ل.س (${_groupMoney(safe * 100)} قديمة)';
+  }
+  return '$newAmount ل.س';
+}
+
 final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
 
 void installAppErrorHandlers(String appName) {
@@ -78,11 +96,16 @@ Future<Map<String, dynamic>> loadSystemConfig() async {
       FirebaseFirestore.instance.collection('public_config').doc('main').get(),
     );
     final data = snapshot.data() ?? <String, dynamic>{};
+    _priceDisplayMode = (data['price_display_mode'] ?? '').toString().trim() == 'new_with_old' ? 'new_with_old' : 'new';
     await cacheJson('customer.system_config', data);
     return data;
   } catch (_) {
     final cached = await readCachedJson('customer.system_config');
-    return cached is Map ? Map<String, dynamic>.from(cached) : <String, dynamic>{};
+    if (cached is Map) {
+      _priceDisplayMode = (cached['price_display_mode'] ?? '').toString().trim() == 'new_with_old' ? 'new_with_old' : 'new';
+      return Map<String, dynamic>.from(cached);
+    }
+    return <String, dynamic>{};
   }
 }
 

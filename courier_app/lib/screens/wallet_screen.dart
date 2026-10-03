@@ -51,17 +51,17 @@ class WalletSummary extends StatelessWidget {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('الرصيد الحالي'),
-                  trailing: Text('$balance ل.س'),
+                  trailing: Text(formatMoney(balance)),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('إجمالي الأرباح'),
-                  trailing: Text('$earnings ل.س'),
+                  trailing: Text(formatMoney(earnings)),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('الدين المسجل'),
-                  trailing: Text('$debt ل.س'),
+                  trailing: Text(formatMoney(debt)),
                 ),
               ],
             ),

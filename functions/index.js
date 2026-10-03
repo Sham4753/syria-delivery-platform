@@ -279,7 +279,7 @@ const CONFIG_LIMITS = {
   categories: {type: 'categories'}, home_sections: {type: 'string_array', max: 20}, featured_vendor_ids: {type: 'id_array', max: 500},
   free_delivery_vendor_ids: {type: 'id_array', max: 500}, batching_enabled: {type: 'boolean'}, max_batch_orders: {type: 'number', min: 2, max: 3},
   courier_min_withdrawal: {type: 'number', min: 0, max: 1000000000}, merchant_min_withdrawal: {type: 'number', min: 0, max: 1000000000},
-  low_bandwidth_mode: {type: 'boolean'}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
+  low_bandwidth_mode: {type: 'boolean'}, price_display_mode: {type: 'price_display_mode'}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
   primary_color: {type: 'color'}, secondary_color: {type: 'color'}, app_logo_url: {type: 'url', max: 2048},
   enable_google_auth: {type: 'boolean'}, enable_facebook_auth: {type: 'boolean'}, enable_whatsapp_otp: {type: 'boolean'}, enable_guest_shopping: {type: 'boolean'},
 };
@@ -288,7 +288,7 @@ const PUBLIC_CONFIG_KEYS = new Set([
   'app_name', 'currency', 'support_phone', 'default_delivery_fee', 'emergency_mode', 'emergency_message',
   'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_point_value', 'errand_fee_per_km',
   'errand_min_fee', 'max_change_amount', 'pricing_tiers', 'banners', 'categories', 'home_sections',
-  'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode',
+  'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode', 'price_display_mode',
   'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
   'enable_whatsapp_otp', 'enable_guest_shopping', 'app_logo_url',
 ]);
@@ -317,6 +317,10 @@ function validateConfigValue(key, value, rule) {
   }
   if (rule.type === 'boolean') {
     if (typeof value !== 'boolean') throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
+    return value;
+  }
+  if (rule.type === 'price_display_mode') {
+    if (!['new', 'new_with_old'].includes(value)) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
     return value;
   }
   if (rule.type === 'number') {
