@@ -23,9 +23,21 @@ export 'package:url_launcher/url_launcher.dart';
 
 String _priceDisplayMode = 'new';
 
+String _groupInteger(String value) {
+  final negative = value.startsWith('-');
+  final digits = negative ? value.substring(1) : value;
+  final grouped = digits.replaceAllMapped(RegExp(r'(?<!^)(?=(\d{3})+$)'), (match) => ',');
+  return negative ? '-$grouped' : grouped;
+}
+
 String _groupMoney(num value) {
-  final rounded = value.round().toString();
-  return rounded.replaceAllMapped(RegExp(r'(?<!^)(?=(\d{3})+$)'), (match) => ',');
+  // Round only to the two stored/displayed decimal places, then trim zeros.
+  final fixed = value.toDouble().toStringAsFixed(2);
+  final parts = fixed.split('.');
+  var integer = parts.first;
+  var fraction = parts.length > 1 ? parts[1].replaceFirst(RegExp(r'0+$'), '') : '';
+  if (integer == '-0' && fraction.isEmpty) integer = '0';
+  return '${_groupInteger(integer)}${fraction.isEmpty ? '' : '.$fraction'}';
 }
 
 String formatMoney(Object? value, {String? mode}) {
