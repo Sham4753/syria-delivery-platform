@@ -1,4 +1,6 @@
 import 'common.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'version_gate.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'screens/home_screen.dart';
 import 'services/network_status.dart';
@@ -8,6 +10,8 @@ Future<void> bootstrapCustomerApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   installAppErrorHandlers('customer');
   Object? startupError;
+  Map<String, dynamic> systemConfig = <String, dynamic>{};
+  var appVersion = '1.0.0';
   try {
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
@@ -17,13 +21,16 @@ Future<void> bootstrapCustomerApp() async {
     await connectToFirebaseEmulators();
     FirebaseFirestore.instance.settings = Settings(persistenceEnabled: true);
     await enableCrashlytics();
-    await loadSystemConfig();
+    systemConfig = await loadSystemConfig();
   } catch (error) {
     startupError = error;
   }
+  try {
+    appVersion = (await PackageInfo.fromPlatform()).version;
+  } catch (_) {}
   runApp(
     startupError == null
-        ? const CustomerApp()
+        ? CustomerApp(systemConfig: systemConfig, appVersion: appVersion)
         : FirebaseStartupErrorApp(
             error: startupError.toString(),
             retry: bootstrapCustomerApp,
@@ -32,7 +39,9 @@ Future<void> bootstrapCustomerApp() async {
 }
 
 class CustomerApp extends StatelessWidget {
-  const CustomerApp({super.key});
+  final Map<String, dynamic> systemConfig;
+  final String appVersion;
+  const CustomerApp({super.key, required this.systemConfig, required this.appVersion});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -74,9 +83,14 @@ class CustomerApp extends StatelessWidget {
         ),
       ),
     ),
-    home: NetworkStatusBanner(
-      onOnline: OrderOutbox.flush,
-      child: const HomePage(),
+    home: VersionControlGate(
+      config: systemConfig,
+      appKey: 'customer',
+      appVersion: appVersion,
+      child: NetworkStatusBanner(
+        onOnline: OrderOutbox.flush,
+        child: const HomePage(),
+      ),
     ),
   );
 }

@@ -105,7 +105,7 @@ dynamic jsonSafeValue(dynamic value) {
 Future<Map<String, dynamic>> loadSystemConfig() async {
   try {
     final snapshot = await withNetworkTimeout(
-      FirebaseFirestore.instance.collection('public_config').doc('main').get(),
+      FirebaseFirestore.instance.collection('public_config').doc('main').get().timeout(const Duration(seconds: 8)),
     );
     final data = snapshot.data() ?? <String, dynamic>{};
     _priceDisplayMode = (data['price_display_mode'] ?? '').toString().trim() == 'new_with_old' ? 'new_with_old' : 'new';

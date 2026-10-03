@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kDebugMode, kIsWeb, PlatformDispatcher, TargetPlatform;
@@ -6,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 export 'package:cloud_functions/cloud_functions.dart';
 export 'package:cloud_firestore/cloud_firestore.dart';
@@ -91,13 +93,34 @@ const firebaseWebOptions = FirebaseOptions(
   authDomain: String.fromEnvironment('FIREBASE_AUTH_DOMAIN') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.firebaseapp.com' : String.fromEnvironment('FIREBASE_AUTH_DOMAIN'),
   storageBucket: String.fromEnvironment('FIREBASE_STORAGE_BUCKET') == '' && useFirebaseEmulators ? 'syria-delivery-2026-majed.appspot.com' : String.fromEnvironment('FIREBASE_STORAGE_BUCKET'),
 );
-Future<void> loadSystemConfig() async {
+Future<void> _cacheSystemConfig(Map<String, dynamic> data) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('merchant.system_config', jsonEncode(data));
+}
+
+Future<Map<String, dynamic>> _readCachedSystemConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString('merchant.system_config');
+  if (raw == null || raw.isEmpty) return <String, dynamic>{};
   try {
-    final snapshot = await FirebaseFirestore.instance.collection('public_config').doc('main').get();
+    final decoded = jsonDecode(raw);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+  } catch (_) {
+    return <String, dynamic>{};
+  }
+}
+
+Future<Map<String, dynamic>> loadSystemConfig() async {
+  try {
+    final snapshot = await FirebaseFirestore.instance.collection('public_config').doc('main').get().timeout(const Duration(seconds: 8));
     final data = snapshot.data() ?? <String, dynamic>{};
     _priceDisplayMode = (data['price_display_mode'] ?? '').toString().trim() == 'new_with_old' ? 'new_with_old' : 'new';
+    await _cacheSystemConfig(data);
+    return data;
   } catch (_) {
-    _priceDisplayMode = 'new';
+    final cached = await _readCachedSystemConfig();
+    _priceDisplayMode = (cached['price_display_mode'] ?? '').toString().trim() == 'new_with_old' ? 'new_with_old' : 'new';
+    return cached;
   }
 }
 Future<void> initializeFirebaseApp() async {
@@ -127,3 +150,5 @@ Future<void> connectToFirebaseEmulators() async {
   FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
   appFunctions.useFunctionsEmulator(host, 5001);
 }
+
+export 'package:url_launcher/url_launcher.dart';

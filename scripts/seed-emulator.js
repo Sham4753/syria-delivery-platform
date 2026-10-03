@@ -84,7 +84,7 @@ async function main() {
   await db.doc('system_config/main').set({
     app_name: 'Syria Delivery Demo', currency: 'SYP', surge_enabled: false, surge_multiplier: 1,
     batching_enabled: false, max_batch_orders: 2, loyalty_points_rate: 1, loyalty_point_value: 0.1, loyalty_points_divisor: 10,
-    enable_guest_shopping: true, price_display_mode: 'new', enable_google_auth: true, enable_facebook_auth: false,
+    enable_guest_shopping: true, price_display_mode: 'new', min_app_version: {customer: '1.0.0', merchant: '1.0.0', courier: '1.0.0'}, latest_app_version: {customer: '1.0.0', merchant: '1.0.0', courier: '1.0.0'}, update_url: '', maintenance_mode: false, maintenance_message: 'سيعود التطبيق للعمل قريبًا.', enable_google_auth: true, enable_facebook_auth: false,
     enable_whatsapp_otp: false, low_bandwidth_mode: true, updated_at: timestamp(),
   }, { merge: true });
   await db.doc('zones/zone-1').set({ name: 'دمشق وريف دمشق - تجربة', delivery_fee_base: 100, is_active: true, is_accepting_orders: true, surge_multiplier: 1, updated_at: timestamp() }, { merge: true });

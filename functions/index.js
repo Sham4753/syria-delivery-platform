@@ -279,7 +279,7 @@ const CONFIG_LIMITS = {
   categories: {type: 'categories'}, home_sections: {type: 'string_array', max: 20}, featured_vendor_ids: {type: 'id_array', max: 500},
   free_delivery_vendor_ids: {type: 'id_array', max: 500}, batching_enabled: {type: 'boolean'}, max_batch_orders: {type: 'number', min: 2, max: 3},
   courier_min_withdrawal: {type: 'number', min: 0, max: 1000000000}, merchant_min_withdrawal: {type: 'number', min: 0, max: 1000000000},
-  low_bandwidth_mode: {type: 'boolean'}, price_display_mode: {type: 'price_display_mode'}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
+  low_bandwidth_mode: {type: 'boolean'}, price_display_mode: {type: 'price_display_mode'}, min_app_version: {type: 'version_map'}, latest_app_version: {type: 'version_map'}, update_url: {type: 'url', max: 2048}, maintenance_mode: {type: 'boolean'}, maintenance_message: {type: 'string', max: 500}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
   primary_color: {type: 'color'}, secondary_color: {type: 'color'}, app_logo_url: {type: 'url', max: 2048},
   enable_google_auth: {type: 'boolean'}, enable_facebook_auth: {type: 'boolean'}, enable_whatsapp_otp: {type: 'boolean'}, enable_guest_shopping: {type: 'boolean'},
 };
@@ -289,7 +289,7 @@ const PUBLIC_CONFIG_KEYS = new Set([
   'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_point_value', 'errand_fee_per_km',
   'errand_min_fee', 'max_change_amount', 'pricing_tiers', 'banners', 'categories', 'home_sections',
   'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode', 'price_display_mode',
-  'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
+  'min_app_version', 'latest_app_version', 'update_url', 'maintenance_mode', 'maintenance_message', 'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
   'enable_whatsapp_otp', 'enable_guest_shopping', 'app_logo_url',
 ]);
 
@@ -322,6 +322,15 @@ function validateConfigValue(key, value, rule) {
   if (rule.type === 'price_display_mode') {
     if (!['new', 'new_with_old'].includes(value)) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
     return value;
+  }
+  if (rule.type === 'version_map') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
+    const clean = {};
+    for (const app of ['customer', 'merchant', 'courier']) {
+      if (value[app] !== undefined) clean[app] = validateBoundedString(value[app], 32, `${key}.${app}`);
+    }
+    if (Object.keys(value).some((app) => !['customer', 'merchant', 'courier'].includes(app))) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
+    return clean;
   }
   if (rule.type === 'number') {
     const number = Number(value);

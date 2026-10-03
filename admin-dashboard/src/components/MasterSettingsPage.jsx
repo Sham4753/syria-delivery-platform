@@ -12,7 +12,7 @@ const defaults = {
   featured_vendor_ids: [], free_delivery_vendor_ids: [], surge_enabled: false, surge_multiplier: 1,
   batching_enabled: false, max_batch_orders: 2, loyalty_points_rate: 0, loyalty_points_divisor: 10, loyalty_point_value: 0,
   courier_min_withdrawal: 0, merchant_min_withdrawal: 0, low_bandwidth_mode: false,
-  price_display_mode: 'new', min_order_amount: 0, primary_color: '#0f766e', secondary_color: '#f59e0b',
+  price_display_mode: 'new', min_app_version: { customer: '1.0.0', merchant: '1.0.0', courier: '1.0.0' }, latest_app_version: { customer: '1.0.0', merchant: '1.0.0', courier: '1.0.0' }, update_url: '', maintenance_mode: false, maintenance_message: 'سيعود التطبيق للعمل قريبًا.', min_order_amount: 0, primary_color: '#0f766e', secondary_color: '#f59e0b',
   enable_google_auth: true, enable_facebook_auth: false, enable_whatsapp_otp: false, enable_guest_shopping: true,
   app_logo_url: '',
 }
@@ -116,6 +116,12 @@ export default function MasterSettingsPage() {
         <Field label="حد سحب المندوب" type="number" min="0" value={config.courier_min_withdrawal || 0} onChange={e => update('courier_min_withdrawal', Number(e.target.value))} />
         <Field label="حد سحب التاجر" type="number" min="0" value={config.merchant_min_withdrawal || 0} onChange={e => update('merchant_min_withdrawal', Number(e.target.value))} />
         <Field label="الحد الأدنى للطلب" type="number" min="0" value={config.min_order_amount || 0} onChange={e => update('min_order_amount', Number(e.target.value))} />
+        <section className="data-card settings-card"><h2>التحكم بالإصدارات</h2><div className="form-grid">
+          {['customer', 'merchant', 'courier'].map(app => <div key={app}><Field label={`الحد الأدنى — ${app}`} value={config.min_app_version?.[app] || ''} placeholder="1.2.0" onChange={e => update('min_app_version', { ...config.min_app_version, [app]: e.target.value })} /><Field label={`أحدث إصدار — ${app}`} value={config.latest_app_version?.[app] || ''} placeholder="1.2.0" onChange={e => update('latest_app_version', { ...config.latest_app_version, [app]: e.target.value })} /></div>)}
+          <Field label="رابط التحديث" value={config.update_url || ''} onChange={e => update('update_url', e.target.value)} />
+          <label className="check-field"><input type="checkbox" checked={config.maintenance_mode === true} onChange={e => update('maintenance_mode', e.target.checked)} /> تفعيل وضع الصيانة</label>
+          <Field label="رسالة الصيانة" value={config.maintenance_message || ''} onChange={e => update('maintenance_message', e.target.value)} />
+        </div></section>
       </div></section>
       <section className="data-card settings-card"><h2>الهوية والأصول منخفضة البيانات</h2><div className="form-grid"><Field label="اللون الأساسي" type="color" value={config.primary_color || '#0f766e'} onChange={e => update('primary_color', e.target.value)} /><Field label="اللون الثانوي" type="color" value={config.secondary_color || '#f59e0b'} onChange={e => update('secondary_color', e.target.value)} /><Field label="رابط شعار التطبيق" value={config.app_logo_url || ''} onChange={e => update('app_logo_url', e.target.value)} /><label className="field"><span>رفع شعار / WebP أقل من 150KB</span><input type="file" accept="image/*" disabled={uploadBusy} onChange={e => uploadAsset(e, 'app_logo_url', 'branding')} /></label></div></section>
       <section className="data-card settings-card"><h2>التصنيفات الديناميكية</h2><Field label="المعرّف | الاسم | الأيقونة، تصنيف في كل سطر" value={(config.categories || []).map(c => `${c.id}|${c.name}|${c.icon || ''}`).join('\n')} onChange={e => update('categories', linesToCategories(e.target.value))} /></section>

@@ -9,7 +9,10 @@
   "loyalty_point_value": 0.1,
   "loyalty_points_divisor": 10,
   "price_display_mode": "new",
-  "default_opening_hours": { "open": "09:00", "close": "23:00" },
+  "default_opening_hours": {
+    "open": "09:00",
+    "close": "23:00"
+  },
   "payment_settings": {
     "bank_transfer": {
       "enabled": false,
@@ -21,5 +24,18 @@
       "currency": "SYP",
       "instructions_ar": ""
     }
-  }
+  },
+  "min_app_version": {
+    "customer": "1.0.0",
+    "merchant": "1.0.0",
+    "courier": "1.0.0"
+  },
+  "latest_app_version": {
+    "customer": "1.0.0",
+    "merchant": "1.0.0",
+    "courier": "1.0.0"
+  },
+  "update_url": "",
+  "maintenance_mode": false,
+  "maintenance_message": "سيعود التطبيق للعمل قريبًا."
 }

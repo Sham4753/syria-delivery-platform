@@ -1,4 +1,6 @@
 import 'common.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'version_gate.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'screens/login_screen.dart';
 import 'screens/orders_screen.dart';
@@ -8,6 +10,8 @@ Future<void> bootstrapCourierApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   installAppErrorHandlers('courier');
   Object? startupError;
+  Map<String, dynamic> systemConfig = <String, dynamic>{};
+  var appVersion = '1.0.0';
   try {
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
@@ -17,13 +21,16 @@ Future<void> bootstrapCourierApp() async {
     await connectToFirebaseEmulators();
     FirebaseFirestore.instance.settings = Settings(persistenceEnabled: true);
     await enableCrashlytics();
-    await loadSystemConfig();
+    systemConfig = await loadSystemConfig();
   } catch (error) {
     startupError = error;
   }
+  try {
+    appVersion = (await PackageInfo.fromPlatform()).version;
+  } catch (_) {}
   runApp(
     startupError == null
-        ? const CourierApp()
+        ? CourierApp(systemConfig: systemConfig, appVersion: appVersion)
         : FirebaseStartupErrorApp(
             error: startupError.toString(),
             retry: bootstrapCourierApp,
@@ -32,7 +39,9 @@ Future<void> bootstrapCourierApp() async {
 }
 
 class CourierApp extends StatelessWidget {
-  const CourierApp({super.key});
+  final Map<String, dynamic> systemConfig;
+  final String appVersion;
+  const CourierApp({super.key, required this.systemConfig, required this.appVersion});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -73,8 +82,12 @@ class CourierApp extends StatelessWidget {
         ),
       ),
     ),
-    home: NetworkStatusBanner(
-      child: StreamBuilder<User?>(
+    home: VersionControlGate(
+      config: systemConfig,
+      appKey: 'courier',
+      appVersion: appVersion,
+      child: NetworkStatusBanner(
+        child: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.idTokenChanges(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -82,6 +95,7 @@ class CourierApp extends StatelessWidget {
           }
           return snapshot.data == null ? const LoginPage() : const CourierGate();
         },
+      ),
       ),
     ),
   );
