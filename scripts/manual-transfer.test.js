@@ -72,6 +72,8 @@ class ReferenceStore {
   assert.strictEqual(await store.reserve('sham_cash', 'RACE-1234', 'pay_new'), 'reserved', 'إعادة المحاولة تحرر الحجز القديم');
 
   const source = fs.readFileSync(require('path').join(__dirname, '..', 'functions', 'index.js'), 'utf8');
+  const adminTransfers = fs.readFileSync(require('path').join(__dirname, '..', 'admin-dashboard', 'src', 'components', 'OperationsPages.jsx'), 'utf8');
+  const masterSettings = fs.readFileSync(require('path').join(__dirname, '..', 'admin-dashboard', 'src', 'components', 'MasterSettingsPage.jsx'), 'utf8');
   const rules = fs.readFileSync(require('path').join(__dirname, '..', 'firestore.rules'), 'utf8');
   assert.match(source, /reference_attempts: FieldValue\.increment\(1\)/);
   assert.match(source, /attempts >= 3/);
@@ -79,7 +81,18 @@ class ReferenceStore {
   assert.match(source, /tx\.create\(reservationRef/);
   assert.match(source, /tx\.delete\(db\.doc\(`manual_transfer_references/);
   assert.match(source, /action: 'manual_transfer_review'/);
-  assert.match(source, /reason \|\| null/);
+  assert.match(source, /decision === 'reject' && !reason/);
+  assert.match(source, /decision === 'approve' && !amountVerified/);
+  assert.match(source, /amount_verified: amountVerified/);
+  assert.match(source, /reviewer: context\.auth\.uid/);
+  assert.match(adminTransfers, /\['manual_transfer', 'bank_transfer'\]\.includes\(item\.method\)/);
+  assert.match(adminTransfers, /تحققت من المبلغ في كشف المحفظة/);
+  assert.match(adminTransfers, /amount_verified: decision === 'approve'/);
+  assert.match(adminTransfers, /item\.channel/);
+  assert.match(adminTransfers, /item\.sender_name/);
+  assert.match(masterSettings, /syriatel_cash/);
+  assert.match(masterSettings, /sham_cash/);
+  assert.match(masterSettings, /لا تفعّل قناة قبل التأكد من وسيلة مطابقة كشف الحسابات/);
   assert.match(source, /notifyUser\(reviewedPayment\.customer_id/);
   assert.match(source, /exports\.createBankTransferIntent = exports\.createManualTransferIntent/);
   assert.match(source, /exports\.submitBankTransferProof = exports\.submitManualTransferProof/);

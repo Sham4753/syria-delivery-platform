@@ -753,8 +753,10 @@ exports.reviewManualTransfer = onCall(async (data, context) => {
   const paymentId = String(data?.payment_id || '').trim();
   const decision = String(data?.decision || '').trim();
   const reason = String(data?.reason || '').trim().slice(0, 300);
+  const amountVerified = data?.amount_verified === true;
   if (!paymentId || !['approve', 'reject'].includes(decision)) throw new HttpsError('invalid-argument', 'عملية الدفع والقرار مطلوبان');
-  if (!reason) throw new HttpsError('invalid-argument', 'سبب القرار مطلوب للاعتماد والرفض');
+  if (decision === 'reject' && !reason) throw new HttpsError('invalid-argument', 'سبب الرفض مطلوب');
+  if (decision === 'approve' && !amountVerified) throw new HttpsError('failed-precondition', 'يجب تأكيد التحقق من المبلغ قبل الاعتماد');
   const paymentRef = db.doc(`payment_intents/${paymentId}`);
   await db.runTransaction(async (tx) => {
     const paymentSnap = await tx.get(paymentRef);
@@ -770,13 +772,13 @@ exports.reviewManualTransfer = onCall(async (data, context) => {
     } catch (error) {
       throw new HttpsError('failed-precondition', error.message);
     }
-    tx.update(paymentRef, {status: nextStatus, review_started_at: payment.review_started_at || FieldValue.serverTimestamp(), reviewed_by: context.auth.uid, reviewed_at: FieldValue.serverTimestamp(), review_reason: reason || null, updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
+    tx.update(paymentRef, {status: nextStatus, review_started_at: payment.review_started_at || FieldValue.serverTimestamp(), reviewed_by: context.auth.uid, reviewed_at: FieldValue.serverTimestamp(), review_reason: reason || null, amount_verified: decision === 'approve' ? true : false, updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
     tx.update(orderRef, {payment_status: decision === 'approve' ? 'paid' : 'failed', ...(decision === 'approve' ? {paid_at: FieldValue.serverTimestamp()} : {payment_failure_reason: reason}), updated_at: FieldValue.serverTimestamp()});
     const reviewEventRef = db.collection('payment_events').doc();
     const reviewChannel = payment.method === 'bank_transfer' ? 'bank_transfer' : payment.channel;
     if (!CHANNELS.includes(reviewChannel)) throw new HttpsError('failed-precondition', 'قناة التحويل غير صالحة');
-    tx.create(reviewEventRef, {payment_id: paymentId, order_id: payment.order_id, type: decision === 'approve' ? 'approved' : 'rejected', action: 'manual_transfer_review', channel: reviewChannel, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, actor_id: context.auth.uid, reason: reason || null, created_at: FieldValue.serverTimestamp()});
-    tx.create(db.collection('audit_logs').doc(), {action: 'manual_transfer_review', channel: reviewChannel, payment_id: paymentId, order_id: payment.order_id, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
+    tx.create(reviewEventRef, {payment_id: paymentId, order_id: payment.order_id, type: decision === 'approve' ? 'approved' : 'rejected', action: 'manual_transfer_review', channel: reviewChannel, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, amount_verified: amountVerified, reviewer: context.auth.uid, actor_id: context.auth.uid, reason: reason || null, created_at: FieldValue.serverTimestamp()});
+    tx.create(db.collection('audit_logs').doc(), {action: 'manual_transfer_review', channel: reviewChannel, payment_id: paymentId, order_id: payment.order_id, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, amount_verified: amountVerified, reviewer: context.auth.uid, actor_id: context.auth.uid, reason: reason || null, created_at: FieldValue.serverTimestamp()});
     if (decision === 'approve') {
       const entries = manualTransferLedgerEntries({paymentId, orderId: payment.order_id, amount: payment.amount, currency: payment.currency, channel: reviewChannel, actorId: context.auth.uid});
       for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, created_at: FieldValue.serverTimestamp()});

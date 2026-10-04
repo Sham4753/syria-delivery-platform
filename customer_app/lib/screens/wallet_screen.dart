@@ -102,14 +102,16 @@ class CustomerWalletPage extends StatelessWidget {
 
 class PaymentChoice {
   final String method;
+  final String? channel;
   final num walletAmount;
   final num loyaltyPoints;
   final num cashChangeFor;
-  const PaymentChoice(this.method, this.walletAmount, this.loyaltyPoints, this.cashChangeFor);
+  const PaymentChoice(this.method, this.walletAmount, this.loyaltyPoints, this.cashChangeFor, {this.channel});
 }
 
-Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<String, dynamic> user, {bool bankTransferEnabled = false, String bankName = ''}) async {
+Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<String, dynamic> user, {bool bankTransferEnabled = false, String bankName = '', Map<String, Map<String, dynamic>> manualChannels = const {}}) async {
   String method = 'cash_on_delivery';
+  String? channel;
   num wallet = 0;
   num points = 0;
   num cashChange = 0;
@@ -127,14 +129,22 @@ Future<PaymentChoice?> showPaymentSheet(BuildContext context, num total, Map<Str
           if (method == 'cash_on_delivery') TextField(decoration: const InputDecoration(labelText: 'الفئة النقدية'), keyboardType: TextInputType.number, onChanged: (value) => cashChange = num.tryParse(value) ?? 0),
           RadioListTile<String>(value: 'wallet', groupValue: method, onChanged: balance >= total ? (String? value) => setState(() { method = value ?? method; wallet = total; }) : null, title: Text('المحفظة — ${formatMoney(balance)}')),
           RadioListTile<String>(value: 'hybrid', groupValue: method, onChanged: balance > 0 || loyalty > 0 ? (String? value) => setState(() => method = value ?? method) : null, title: const Text('دفع جزئي + كاش')),
-          if (bankTransferEnabled) RadioListTile<String>(value: 'bank_transfer', groupValue: method, onChanged: (String? value) => setState(() { method = value ?? method; wallet = 0; points = 0; cashChange = 0; }), title: Text('تحويل بنكي${bankName.isEmpty ? '' : ' — $bankName'}')),
+          if (bankTransferEnabled && manualChannels.isEmpty) RadioListTile<String>(value: 'manual_transfer', groupValue: method, onChanged: (String? value) => setState(() { method = value ?? method; channel = 'bank_transfer'; wallet = 0; points = 0; cashChange = 0; }), title: Text('تحويل بنكي${bankName.isEmpty ? '' : ' — $bankName'}')),
+          ...manualChannels.entries.where((entry) => entry.value['enabled'] == true).map((entry) {
+            final details = entry.value;
+            final selected = method == 'manual_transfer' && channel == entry.key;
+            return Column(children: [
+              RadioListTile<String>(value: entry.key, groupValue: selected ? entry.key : null, onChanged: (_) => setState(() { method = 'manual_transfer'; channel = entry.key; wallet = 0; points = 0; cashChange = 0; }), title: Text('${details['display_name'] ?? entry.key}')),
+              if (selected) Padding(padding: const EdgeInsetsDirectional.only(start: 16, end: 16, bottom: 8), child: Align(alignment: AlignmentDirectional.centerStart, child: Text('الوجهة: ${details['account_label'] ?? '—'}\n${details['instructions'] ?? ''}\nالمبلغ المستحق: ${formatMoney(total)}'))),
+            ]);
+          }),
           if (method == 'hybrid') Row(children: [
             Expanded(child: TextField(decoration: const InputDecoration(labelText: 'من المحفظة'), keyboardType: TextInputType.number, onChanged: (value) => wallet = num.tryParse(value) ?? 0)),
             const SizedBox(width: 10),
             Expanded(child: TextField(decoration: const InputDecoration(labelText: 'نقاط'), keyboardType: TextInputType.number, onChanged: (value) => points = num.tryParse(value) ?? 0)),
           ]),
           const SizedBox(height: 14),
-          SizedBox(width: double.infinity, child: FilledButton(onPressed: () => Navigator.pop(context, PaymentChoice(method, wallet, points, cashChange)), child: const Text('متابعة'))),
+          SizedBox(width: double.infinity, child: FilledButton(onPressed: () => Navigator.pop(context, PaymentChoice(method, wallet, points, cashChange, channel: channel)), child: const Text('متابعة'))),
         ]),
       ),
     ),

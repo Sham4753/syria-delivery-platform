@@ -4,6 +4,7 @@ import 'login_screen.dart';
 import 'orders_screen.dart';
 import 'wallet_screen.dart';
 import '../services/order_outbox.dart';
+import '../manual_transfer.dart';
 
 class ProductsPage extends StatefulWidget {
   final String vendorId, name, zoneId;
@@ -105,8 +106,11 @@ class _ProductsPageState extends State<ProductsPage> {
     pendingIdempotencyKey ??= 'order-${DateTime.now().microsecondsSinceEpoch}-$uid';
     final userSnap = await FirebaseFirestore.instance.collection('users').doc(uid).get();
     final paymentConfig = await FirebaseFirestore.instance.collection('public_payment_config').doc('main').get();
-    final bank = (paymentConfig.data()?['bank_transfer'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
-    final choice = await showPaymentSheet(context, total, userSnap.data() ?? {}, bankTransferEnabled: bank['enabled'] == true, bankName: '${bank['bank_name'] ?? ''}');
+    final configData = paymentConfig.data() ?? <String, dynamic>{};
+    final bank = (configData['bank_transfer'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+    final manualChannels = enabledManualTransferChannels(configData);
+    if (manualChannels.isEmpty && bank['enabled'] == true) manualChannels['bank_transfer'] = {'enabled': true, 'display_name': bank['display_name_ar'] ?? 'تحويل بنكي', 'account_label': [bank['bank_name'], bank['account_holder'], bank['account_number_masked']].where((value) => value != null && '$value'.isNotEmpty).join(' — '), 'instructions': bank['instructions_ar'] ?? ''};
+    final choice = await showPaymentSheet(context, total, userSnap.data() ?? {}, manualChannels: manualChannels, bankTransferEnabled: bank['enabled'] == true, bankName: '${bank['bank_name'] ?? ''}');
     if (choice == null) return;
     final sourceAddress = address!;
     final selectedLocation = sourceAddress['location'] as GeoPoint?;
@@ -124,7 +128,7 @@ class _ProductsPageState extends State<ProductsPage> {
     };
     final payload = <String, dynamic>{
         'vendor_id': widget.vendorId, 'zone_id': widget.zoneId, 'items': cart.values.toList(), 'coupon_code': couponCode,
-        'delivery_address': selectedAddress, 'payment_method': choice.method, 'wallet_amount': choice.walletAmount,
+        'delivery_address': selectedAddress, ...(choice.method == 'manual_transfer' ? manualTransferOrderFields(choice.channel ?? 'bank_transfer') : {'payment_method': choice.method}), 'wallet_amount': choice.walletAmount,
         'loyalty_points': choice.loyaltyPoints, 'cash_change_for': choice.cashChangeFor, 'idempotency_key': pendingIdempotencyKey,
       };
     try {
@@ -136,7 +140,7 @@ class _ProductsPageState extends State<ProductsPage> {
       }
       if (mounted) {
         setState(() { cart.clear(); pendingIdempotencyKey = null; });
-        if (choice.method == 'bank_transfer') await _submitBankTransfer(submitted.orderId, bank);
+        if (choice.method == 'manual_transfer') await _submitManualTransfer(submitted.orderId, choice.channel ?? 'bank_transfer', manualChannels[choice.channel ?? 'bank_transfer'] ?? bank);
         Navigator.push(context, MaterialPageRoute(builder: (_) => OrderPage(orderId: submitted.orderId)));
       }
     } on FirebaseFunctionsException catch (error) {
@@ -146,25 +150,40 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
-  Future<void> _submitBankTransfer(String orderId, Map<String, dynamic> bank) async {
+  Future<void> _submitManualTransfer(String orderId, String channel, Map<String, dynamic> details) async {
     if (!mounted) return;
-    final reference = TextEditingController();
-    final submitted = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
-      title: const Text('إثبات التحويل البنكي'),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text('حوّل إلى ${bank['bank_name'] ?? 'الحساب المعلن'} ثم أدخل مرجع الحوالة. سيبقى الطلب بانتظار مراجعة الأدمن.'),
-        const SizedBox(height: 12),
-        TextField(controller: reference, decoration: const InputDecoration(labelText: 'مرجع الحوالة'), autofocus: true),
-      ]),
-      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('لاحقًا')), FilledButton(onPressed: () => Navigator.pop(dialogContext, reference.text.trim().isNotEmpty), child: const Text('إرسال'))],
-    ));
-    if (submitted != true || reference.text.trim().isEmpty) return;
+    Map<String, dynamic>? intent;
     try {
-      final intent = await appFunctions.httpsCallable('createBankTransferIntent').call({'order_id': orderId});
-      await appFunctions.httpsCallable('submitBankTransferProof').call({'payment_id': intent.data['payment_id'], 'reference': reference.text.trim()});
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال التحويل للمراجعة')));
+      final result = await appFunctions.httpsCallable('createManualTransferIntent').call({'order_id': orderId, 'channel': channel});
+      intent = Map<String, dynamic>.from(result.data as Map);
     } on FirebaseFunctionsException catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'تعذر إرسال إثبات التحويل')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message ?? 'تعذر بدء عملية التحويل')));
+      return;
+    }
+    if (intent == null) return;
+    final paymentId = '${intent['payment_id'] ?? ''}';
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final reference = TextEditingController();
+      final submitted = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+        title: Text('إثبات ${details['display_name'] ?? channel}'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('الوجهة: ${details['account_label'] ?? 'الحساب المعلن'}\n${details['instructions'] ?? ''}\nأدخل المرجع كما يظهر في كشف الحساب. المحاولة ${attempt + 1} من 3.'),
+          const SizedBox(height: 12),
+          TextField(controller: reference, decoration: const InputDecoration(labelText: 'مرجع الحوالة', helperText: 'يمكن تصحيح المرجع قبل بدء المراجعة'), autofocus: true),
+        ]),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('لاحقًا')), FilledButton(onPressed: () => Navigator.pop(dialogContext, reference.text.trim().isNotEmpty), child: const Text('إرسال'))],
+      ));
+      final normalizedReference = reference.text.trim();
+      if (submitted != true || normalizedReference.isEmpty) return;
+      try {
+        await appFunctions.httpsCallable('submitManualTransferProof').call({'payment_id': paymentId, 'reference': normalizedReference});
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال التحويل للمراجعة')));
+        return;
+      } on FirebaseFunctionsException catch (error) {
+        if (!mounted) return;
+        final message = manualTransferErrorMessage(error.code, error.message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
     }
   }
 
