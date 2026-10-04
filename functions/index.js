@@ -279,7 +279,7 @@ const CONFIG_LIMITS = {
   categories: {type: 'categories'}, home_sections: {type: 'string_array', max: 20}, featured_vendor_ids: {type: 'id_array', max: 500},
   free_delivery_vendor_ids: {type: 'id_array', max: 500}, batching_enabled: {type: 'boolean'}, max_batch_orders: {type: 'number', min: 2, max: 3},
   courier_min_withdrawal: {type: 'number', min: 0, max: 1000000000}, merchant_min_withdrawal: {type: 'number', min: 0, max: 1000000000},
-  low_bandwidth_mode: {type: 'boolean'}, price_display_mode: {type: 'price_display_mode'}, min_app_version: {type: 'version_map'}, latest_app_version: {type: 'version_map'}, update_url: {type: 'url', max: 2048}, maintenance_mode: {type: 'boolean'}, maintenance_message: {type: 'string', max: 500}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
+  low_bandwidth_mode: {type: 'boolean'}, price_display_mode: {type: 'price_display_mode'}, min_app_version: {type: 'version_map'}, latest_app_version: {type: 'version_map'}, update_url: {type: 'update_url', max: 2048}, maintenance_mode: {type: 'boolean'}, maintenance_apps: {type: 'boolean_map'}, maintenance_message: {type: 'string', max: 500}, maintenance_messages: {type: 'string_map', max: 500}, min_order_amount: {type: 'number', min: 0, max: 1000000000},
   primary_color: {type: 'color'}, secondary_color: {type: 'color'}, app_logo_url: {type: 'url', max: 2048},
   enable_google_auth: {type: 'boolean'}, enable_facebook_auth: {type: 'boolean'}, enable_whatsapp_otp: {type: 'boolean'}, enable_guest_shopping: {type: 'boolean'},
 };
@@ -289,7 +289,7 @@ const PUBLIC_CONFIG_KEYS = new Set([
   'surge_enabled', 'surge_multiplier', 'loyalty_points_rate', 'loyalty_point_value', 'errand_fee_per_km',
   'errand_min_fee', 'max_change_amount', 'pricing_tiers', 'banners', 'categories', 'home_sections',
   'featured_vendor_ids', 'free_delivery_vendor_ids', 'batching_enabled', 'max_batch_orders', 'low_bandwidth_mode', 'price_display_mode',
-  'min_app_version', 'latest_app_version', 'update_url', 'maintenance_mode', 'maintenance_message', 'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
+  'min_app_version', 'latest_app_version', 'update_url', 'maintenance_mode', 'maintenance_apps', 'maintenance_message', 'maintenance_messages', 'min_order_amount', 'primary_color', 'secondary_color', 'enable_google_auth', 'enable_facebook_auth',
   'enable_whatsapp_otp', 'enable_guest_shopping', 'app_logo_url',
 ]);
 
@@ -310,6 +310,15 @@ function validateBoundedString(value, max, label) {
 function validateConfigValue(key, value, rule) {
   if (rule.type === 'string') return validateBoundedString(value, rule.max, key);
   if (rule.type === 'url') return validateBoundedString(value, rule.max, key);
+  if (rule.type === 'update_url') {
+    const url = validateBoundedString(value, rule.max, key);
+    if (!url) return url;
+    let parsed;
+    try { parsed = new URL(url); } catch (_) { throw new HttpsError('invalid-argument', 'رابط التحديث غير صالح؛ استخدم https:// أو market://'); }
+    if (!['https:', 'market:'].includes(parsed.protocol)) throw new HttpsError('invalid-argument', 'رابط التحديث يجب أن يبدأ بـ https:// أو market://');
+    if (parsed.protocol === 'https:' && !parsed.hostname) throw new HttpsError('invalid-argument', 'رابط التحديث https غير صالح');
+    return url;
+  }
   if (rule.type === 'color') {
     const color = validateBoundedString(value, 16, key);
     if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new HttpsError('invalid-argument', `قيمة ${key} اللونية غير صالحة`);
@@ -324,12 +333,34 @@ function validateConfigValue(key, value, rule) {
     return value;
   }
   if (rule.type === 'version_map') {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `قيمة ${key} يجب أن تكون خريطة إصدارات`);
     const clean = {};
+    const versionPattern = /^\d+(\.\d+){0,2}(\+\d+)?$/;
     for (const app of ['customer', 'merchant', 'courier']) {
-      if (value[app] !== undefined) clean[app] = validateBoundedString(value[app], 32, `${key}.${app}`);
+      if (value[app] !== undefined) {
+        const version = validateBoundedString(value[app], 32, `${key}.${app}`);
+        if (!versionPattern.test(version)) throw new HttpsError('invalid-argument', `إصدار ${app} في ${key} غير صالح؛ استخدم صيغة مثل 1.2.0 أو 1.2.0+5`);
+        clean[app] = version;
+      }
     }
-    if (Object.keys(value).some((app) => !['customer', 'merchant', 'courier'].includes(app))) throw new HttpsError('invalid-argument', `قيمة ${key} غير صالحة`);
+    if (Object.keys(value).some((app) => !['customer', 'merchant', 'courier'].includes(app))) throw new HttpsError('invalid-argument', `مفاتيح ${key} يجب أن تكون customer أو merchant أو courier`);
+    return clean;
+  }
+  if (rule.type === 'boolean_map') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `قيمة ${key} يجب أن تكون خريطة تطبيقات`);
+    const clean = {};
+    for (const app of ['customer', 'merchant', 'courier']) if (value[app] !== undefined) {
+      if (typeof value[app] !== 'boolean') throw new HttpsError('invalid-argument', `قيمة صيانة ${app} يجب أن تكون true أو false`);
+      clean[app] = value[app];
+    }
+    if (Object.keys(value).some((app) => !['customer', 'merchant', 'courier'].includes(app))) throw new HttpsError('invalid-argument', `مفاتيح ${key} غير صالحة`);
+    return clean;
+  }
+  if (rule.type === 'string_map') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `قيمة ${key} يجب أن تكون خريطة نصوص`);
+    const clean = {};
+    for (const app of ['customer', 'merchant', 'courier']) if (value[app] !== undefined) clean[app] = validateBoundedString(value[app], rule.max, `${key}.${app}`);
+    if (Object.keys(value).some((app) => !['customer', 'merchant', 'courier'].includes(app))) throw new HttpsError('invalid-argument', `مفاتيح ${key} غير صالحة`);
     return clean;
   }
   if (rule.type === 'number') {
@@ -372,6 +403,20 @@ function validateConfigValue(key, value, rule) {
   throw new HttpsError('invalid-argument', `نوع الإعداد ${key} غير مدعوم`);
 }
 
+function compareConfigVersions(left, right) {
+  const parse = (value) => String(value).split('+')[0].split('.').map(Number);
+  const a = parse(left); const b = parse(right);
+  for (let i = 0; i < 3; i++) { const ai = a[i] || 0; const bi = b[i] || 0; if (ai !== bi) return ai < bi ? -1 : 1; }
+  return 0;
+}
+function validateVersionRelationships(config) {
+  const minimum = config.min_app_version || {}; const latest = config.latest_app_version || {};
+  for (const app of ['customer', 'merchant', 'courier']) {
+    if (minimum[app] && latest[app] && compareConfigVersions(minimum[app], latest[app]) > 0) {
+      throw new HttpsError('invalid-argument', `الحد الأدنى لإصدار ${app} لا يجوز أن يتجاوز أحدث إصدار منشور`);
+    }
+  }
+}
 function validateConfigPatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpsError('invalid-argument', 'إعدادات التخصيص غير صالحة');
   const clean = {};
@@ -380,6 +425,7 @@ function validateConfigPatch(patch) {
     if (!rule) throw new HttpsError('invalid-argument', `الإعداد غير مسموح: ${key}`);
     clean[key] = validateConfigValue(key, value, rule);
   }
+  if (clean.min_app_version && clean.latest_app_version) validateVersionRelationships(clean);
   if (clean.emergency_mode === true && clean.emergency_message !== undefined && !clean.emergency_message) throw new HttpsError('invalid-argument', 'رسالة الطوارئ مطلوبة عند تفعيل الوضع');
   return clean;
 }
@@ -394,6 +440,7 @@ exports.publishSystemConfig = onCall(async (data, context) => {
   const result = await db.runTransaction(async (tx) => {
     const currentSnap = await tx.get(mainRef);
     const before = currentSnap.data() || {};
+    validateVersionRelationships({...before, ...patch});
     const version = Number(before.config_version || 0) + 1;
     const after = {...before, ...patch, config_version: version, updated_by: context.auth.uid, updated_at: FieldValue.serverTimestamp()};
     const revisionRef = db.doc(`system_config_revisions/${String(version).padStart(12, '0')}`);

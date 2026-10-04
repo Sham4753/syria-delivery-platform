@@ -37,5 +37,15 @@
   },
   "update_url": "",
   "maintenance_mode": false,
-  "maintenance_message": "سيعود التطبيق للعمل قريبًا."
+  "maintenance_message": "سيعود التطبيق للعمل قريبًا.",
+  "maintenance_apps": {
+    "customer": false,
+    "merchant": false,
+    "courier": false
+  },
+  "maintenance_messages": {
+    "customer": "",
+    "merchant": "",
+    "courier": ""
+  }
 }
