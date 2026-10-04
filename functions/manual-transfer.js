@@ -102,6 +102,13 @@ function assertAmountWithinChannel(amount, channelSettings) {
   return value;
 }
 
+function assertManualTransferChannel(config, channel, amount) {
+  const settings = buildManualTransferSettings(config || {}).manual_transfer.channels[channel] || null;
+  if (!settings?.enabled) throw new Error('قناة التحويل غير متاحة حاليًا');
+  if (amount !== undefined) assertAmountWithinChannel(amount, settings);
+  return settings;
+}
+
 function clearingAccountForChannel(channel) {
   return channel === 'bank_transfer' ? 'bank_clearing' : `${channel}_clearing`;
 }
@@ -116,5 +123,6 @@ module.exports = {
   validateChannelSettings,
   buildManualTransferSettings,
   assertAmountWithinChannel,
+  assertManualTransferChannel,
   clearingAccountForChannel,
 };

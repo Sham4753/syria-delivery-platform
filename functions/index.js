@@ -29,7 +29,7 @@ const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
 const {manualTransferLedgerEntries, assertPaymentTransition} = require('./financial-ledger');
-const {CHANNELS, normalizeReference, referenceHash, referenceReservationId, normalizeChannel, buildManualTransferSettings, assertAmountWithinChannel} = require('./manual-transfer');
+const {CHANNELS, normalizeReference, referenceHash, referenceReservationId, normalizeChannel, buildManualTransferSettings, assertAmountWithinChannel, assertManualTransferChannel} = require('./manual-transfer');
 const {normalizeProviderConfig, verifySignature, providerEvent, providerStatusForEvent, providerLedgerEntries} = require('./payment-provider');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
 const {OFFER_TTL_MS, rankCouriers, pointOf} = require('./dispatch-engine');
@@ -662,6 +662,14 @@ function manualTransferChannelSettings(config, channel) {
   return settings[channel] || null;
 }
 
+function assertManualTransferOrderAllowed(config, channel, amount) {
+  try {
+    return assertManualTransferChannel(config, channel, amount);
+  } catch (error) {
+    throw new HttpsError('failed-precondition', error.message);
+  }
+}
+
 function manualTransferMethodForOrder(order) {
   if (order.payment_method === 'bank_transfer') return {method: 'manual_transfer', channel: 'bank_transfer'};
   if (order.payment_method === 'manual_transfer') return {method: 'manual_transfer', channel: normalizeChannel(order.payment_channel || 'bank_transfer')};
@@ -689,8 +697,7 @@ exports.createManualTransferIntent = onCall(async (data, context) => {
     if (order.payment_method === 'bank_transfer' && requestedChannel !== 'bank_transfer') throw new HttpsError('failed-precondition', 'الطلب القديم يدعم قناة bank_transfer فقط');
     if (orderMethod.method === 'manual_transfer' && order.payment_method === 'manual_transfer' && requestedChannel !== channel) throw new HttpsError('failed-precondition', 'قناة التحويل لا تطابق الطلب');
     if (!['pending', 'unpaid', 'failed'].includes(order.payment_status)) throw new HttpsError('failed-precondition', 'لا يمكن إنشاء عملية دفع لهذا الطلب');
-    const channelSettings = manualTransferChannelSettings(configSnap.data(), channel);
-    if (!channelSettings?.enabled) throw new HttpsError('failed-precondition', 'قناة التحويل غير متاحة حاليًا');
+    const channelSettings = assertManualTransferOrderAllowed(configSnap.data(), channel);
     const existing = await tx.get(db.collection('payment_intents').where('order_id', '==', orderId).where('status', 'in', ['awaiting_customer_action', 'pending_verification']).limit(1));
     if (!existing.empty) {
       result = {payment_id: existing.docs[0].id, status: existing.docs[0].data()?.status, reused: true};
@@ -1230,6 +1237,7 @@ exports.createOrder = onCall(async (data, context) => {
       if (previous.fingerprint !== requestFingerprint) throw new HttpsError('already-exists', 'معرف الطلب مستخدم مع بيانات مختلفة');
       return {order_id: String(previous.order_id), replayed: true};
     }
+    if (paymentMethod === 'manual_transfer') assertManualTransferOrderAllowed(configSnap.data(), paymentChannel);
     if (!vendorSnap.exists || vendorSnap.data()?.is_active !== true) throw new HttpsError('failed-precondition', 'المزود غير متاح');
     if (vendorSnap.data()?.zone_id !== zoneId || vendorSnap.data()?.is_busy === true) throw new HttpsError('failed-precondition', 'المزود مشغول أو خارج المنطقة');
     if (!isVendorOpen(vendorSnap.data(), new Date())) throw new HttpsError('failed-precondition', 'المتجر مغلق حالياً');
@@ -1269,11 +1277,15 @@ exports.createOrder = onCall(async (data, context) => {
       const couponValid = couponSnap.exists && coupon.is_active === true && (!expires || expires > now) && subtotal >= Number(coupon.min_order_amount || 0) && (!coupon.usage_limit_total || Number(coupon.used_count || 0) < Number(coupon.usage_limit_total)) && (!coupon.usage_limit_per_customer || !customerRedemption.exists) && (!coupon.restricted_to_customer || coupon.restricted_to_customer === customerId);
       if (!couponValid) throw new HttpsError('failed-precondition', 'كود الخصم غير صالح أو منتهي');
       discount = money(couponDiscount(coupon, subtotal, deliveryFee));
-      tx.set(redemptionRef, {customer_id: customerId, order_id: orderRef.id, discount_amount: discount, redeemed_at: FieldValue.serverTimestamp()});
-      tx.update(couponRef, {used_count: FieldValue.increment(1)});
     }
     const userData = userSnap.data() || {};
     const totalBeforePayment = Math.max(0, subtotal + deliveryFee - discount);
+    if (paymentMethod === 'manual_transfer') assertManualTransferOrderAllowed(config, paymentChannel, totalBeforePayment);
+    if (couponRef) {
+      const redemptionRef = couponRef.collection('redemptions').doc(customerId);
+      tx.set(redemptionRef, {customer_id: customerId, order_id: orderRef.id, discount_amount: discount, redeemed_at: FieldValue.serverTimestamp()});
+      tx.update(couponRef, {used_count: FieldValue.increment(1)});
+    }
     const walletBalance = Number(userData.wallet_balance || 0);
     const loyaltyBalance = Number(userData.loyalty_points || 0);
     const pointValue = Number(config.loyalty_point_value || 0);

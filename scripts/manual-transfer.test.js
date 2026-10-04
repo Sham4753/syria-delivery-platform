@@ -7,6 +7,7 @@ const {
   referenceReservationId,
   buildManualTransferSettings,
   assertAmountWithinChannel,
+  assertManualTransferChannel,
 } = require('../functions/manual-transfer');
 const {manualTransferLedgerEntries, bankTransferLedgerEntries} = require('../functions/financial-ledger');
 
@@ -40,6 +41,11 @@ assert.doesNotThrow(() => assertAmountWithinChannel(500, configured.manual_trans
 assert.throws(() => assertAmountWithinChannel(99, configured.manual_transfer.channels.syriatel_cash), /حدود/);
 assert.throws(() => assertAmountWithinChannel(501, configured.manual_transfer.channels.syriatel_cash), /حدود/);
 assert.throws(() => buildManualTransferSettings({manual_transfer: {channels: {sham_cash: {min_amount: 10, max_amount: 1}}}}), /حدود/);
+assert.throws(() => assertManualTransferChannel(configured, 'bank_transfer', 100), /غير متاحة/);
+assert.throws(() => assertManualTransferChannel(configured, 'syriatel_cash', 99), /حدود/);
+assert.throws(() => assertManualTransferChannel(configured, 'syriatel_cash', 501), /حدود/);
+assert.doesNotThrow(() => assertManualTransferChannel(configured, 'syriatel_cash', 100));
+assert.strictEqual(assertManualTransferChannel(legacy, 'bank_transfer', 1).enabled, true, 'bank_transfer القديم يجب أن يبقى متوافقًا');
 
 for (const channel of CHANNELS) {
   const entries = manualTransferLedgerEntries({paymentId: 'pay_1', orderId: 'order_1', amount: 125, channel, actorId: 'admin_1'});
@@ -72,6 +78,7 @@ class ReferenceStore {
   assert.strictEqual(await store.reserve('sham_cash', 'RACE-1234', 'pay_new'), 'reserved', 'إعادة المحاولة تحرر الحجز القديم');
 
   const source = fs.readFileSync(require('path').join(__dirname, '..', 'functions', 'index.js'), 'utf8');
+  const manualSource = fs.readFileSync(require('path').join(__dirname, '..', 'functions', 'manual-transfer.js'), 'utf8');
   const adminTransfers = fs.readFileSync(require('path').join(__dirname, '..', 'admin-dashboard', 'src', 'components', 'OperationsPages.jsx'), 'utf8');
   const masterSettings = fs.readFileSync(require('path').join(__dirname, '..', 'admin-dashboard', 'src', 'components', 'MasterSettingsPage.jsx'), 'utf8');
   const rules = fs.readFileSync(require('path').join(__dirname, '..', 'firestore.rules'), 'utf8');
@@ -97,6 +104,10 @@ class ReferenceStore {
   assert.match(source, /exports\.createBankTransferIntent = exports\.createManualTransferIntent/);
   assert.match(source, /exports\.submitBankTransferProof = exports\.submitManualTransferProof/);
   assert.match(source, /exports\.reviewBankTransfer = exports\.reviewManualTransfer/);
+  assert.match(source, /assertManualTransferOrderAllowed\(configSnap\.data\(\), paymentChannel\)/);
+  assert.match(source, /assertManualTransferOrderAllowed\(config, paymentChannel, totalBeforePayment\)/);
+  assert.match(manualSource, /قناة التحويل غير متاحة حاليًا/);
+  assert.match(manualSource, /مبلغ الطلب خارج حدود قناة التحويل/);
   assert.match(rules, /match \/databases\/{database}\/documents/);
   assert(!/match \/manual_transfer_references\//.test(rules), 'manual_transfer_references يجب أن تبقى مرفوضة بالقاعدة الافتراضية');
   console.log('Manual transfer tests passed: normalization, duplicate/channel isolation, concurrent reservation, bounds, retry, idempotency, legacy compatibility, ledger accounts, and default-deny rules.');
