@@ -1,0 +1,58 @@
+name: Firestore Emulator Rules and Transaction Tests
+
+on:
+  push:
+    paths:
+      - 'firestore.rules'
+      - 'firebase.json'
+      - 'scripts/firestore-emulator.test.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/firestore-emulator.yml'
+  pull_request:
+    paths:
+      - 'firestore.rules'
+      - 'firebase.json'
+      - 'scripts/firestore-emulator.test.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/firestore-emulator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firestore-emulator:
+    name: Firestore rules and transaction emulator tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GCLOUD_PROJECT: demo-syria-delivery
+      FIREBASE_PROJECT_ID: demo-syria-delivery
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: Run Firestore Emulator tests and report duration
+        shell: bash
+        run: |
+          started_at=$(date +%s)
+          set +e
+          npm run test:firestore-emulator
+          status=$?
+          ended_at=$(date +%s)
+          duration=$((ended_at - started_at))
+          echo "Firestore Emulator job duration: ${duration}s"
+          exit "$status"

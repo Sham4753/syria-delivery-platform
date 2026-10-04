@@ -12,6 +12,12 @@
     "test:batch2": "node scripts/batch2-contract.test.js && node scripts/time-utils.test.js && node scripts/wallet-guard.test.js",
     "test:batch3": "node scripts/batch3-session-security.test.js && node scripts/batch2-contract.test.js && node scripts/security-contract.test.js",
     "test:batch4": "node scripts/batch4-firestore-performance.test.js && npm run test:batch3",
-    "test:batch5": "node scripts/batch5-error-logging.test.js && npm run test:batch4"
+    "test:batch5": "node scripts/batch5-error-logging.test.js && npm run test:batch4",
+    "test:firestore-emulator": "firebase emulators:exec --project demo-syria-delivery --only firestore \"node scripts/firestore-emulator.test.js\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
+    "firebase-admin": "14.5.0",
+    "firebase-tools": "15.32.1"
   }
 }
