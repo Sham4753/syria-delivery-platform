@@ -738,10 +738,12 @@ exports.submitManualTransferProof = onCall(async (data, context) => {
     const reservationRef = db.doc(`manual_transfer_references/${referenceReservationId(paymentChannel, normalized)}`);
     const reservationSnap = await tx.get(reservationRef);
     if (reservationSnap.exists && reservationSnap.data()?.payment_id !== paymentId) throw new HttpsError('already-exists', 'مرجع التحويل مستخدم مسبقًا لهذه القناة');
-    try {
-      assertPaymentTransition(payment.status, 'pending_verification');
-    } catch (error) {
-      throw new HttpsError('failed-precondition', error.message);
+    if (payment.status === 'awaiting_customer_action') {
+      try {
+        assertPaymentTransition(payment.status, 'pending_verification');
+      } catch (error) {
+        throw new HttpsError('failed-precondition', error.message);
+      }
     }
     if (payment.reference_hash && payment.reference_hash !== referenceHash(normalized)) tx.delete(db.doc(`manual_transfer_references/${referenceReservationId(paymentChannel, payment.reference_normalized)}`));
     if (!reservationSnap.exists) tx.create(reservationRef, {payment_id: paymentId, channel: paymentChannel, reference_hash: referenceHash(normalized), created_at: FieldValue.serverTimestamp()});
@@ -761,15 +763,23 @@ exports.reviewManualTransfer = onCall(async (data, context) => {
   const decision = String(data?.decision || '').trim();
   const reason = String(data?.reason || '').trim().slice(0, 300);
   const amountVerified = data?.amount_verified === true;
+  const expectedReferenceHash = String(data?.expected_reference_hash || '').trim();
+  const hasExpectedAttempt = data?.expected_attempt !== undefined && data?.expected_attempt !== null && data?.expected_attempt !== '';
+  const expectedAttempt = hasExpectedAttempt ? Number(data.expected_attempt) : null;
   if (!paymentId || !['approve', 'reject'].includes(decision)) throw new HttpsError('invalid-argument', 'عملية الدفع والقرار مطلوبان');
   if (decision === 'reject' && !reason) throw new HttpsError('invalid-argument', 'سبب الرفض مطلوب');
   if (decision === 'approve' && !amountVerified) throw new HttpsError('failed-precondition', 'يجب تأكيد التحقق من المبلغ قبل الاعتماد');
+  if (!expectedReferenceHash && !hasExpectedAttempt) throw new HttpsError('failed-precondition', 'يجب تمرير نسخة المرجع المعروضة للمراجعة');
+  if (hasExpectedAttempt && (!Number.isInteger(expectedAttempt) || expectedAttempt < 0)) throw new HttpsError('invalid-argument', 'محاولة المرجع المتوقعة غير صالحة');
   const paymentRef = db.doc(`payment_intents/${paymentId}`);
   await db.runTransaction(async (tx) => {
     const paymentSnap = await tx.get(paymentRef);
     if (!paymentSnap.exists) throw new HttpsError('not-found', 'عملية الدفع غير موجودة');
     const payment = paymentSnap.data() || {};
     if (payment.status !== 'pending_verification') throw new HttpsError('failed-precondition', 'عملية الدفع ليست بانتظار المراجعة');
+    if ((expectedReferenceHash && expectedReferenceHash !== String(payment.reference_hash || '')) || (hasExpectedAttempt && expectedAttempt !== Number(payment.reference_attempts || 0))) {
+      throw new HttpsError('aborted', 'تغيّر المرجع بعد عرضه، أعد فتح العملية');
+    }
     const orderRef = db.doc(`orders/${payment.order_id}`);
     const orderSnap = await tx.get(orderRef);
     if (!orderSnap.exists || orderSnap.data()?.payment_intent_id !== paymentId) throw new HttpsError('failed-precondition', 'الطلب المرتبط غير صالح');
