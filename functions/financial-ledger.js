@@ -1,5 +1,6 @@
 const LEDGER_DIRECTIONS = new Set(['debit', 'credit']);
 const PAYMENT_STATUSES = new Set(['created', 'awaiting_customer_action', 'pending_verification', 'pending_provider', 'authorized', 'paid', 'refund_pending', 'refunded', 'failed', 'rejected']);
+const {clearingAccountForChannel} = require('./manual-transfer');
 
 function money(value) {
   const amount = Math.round(Number(value || 0) * 100) / 100;
@@ -59,15 +60,15 @@ function assertPaymentTransition(from, to) {
   if (!transitions[String(from || 'created')]?.includes(to)) throw new Error(`Invalid payment transition: ${from} -> ${to}`);
 }
 
-function bankTransferLedgerEntries({paymentId, orderId, amount, currency = 'SYP', actorId}) {
-  const group = `bank_transfer_${paymentId}_paid`;
+function manualTransferLedgerEntries({paymentId, orderId, amount, currency = 'SYP', actorId, channel = 'bank_transfer'}) {
+  const group = `manual_transfer_${channel}_${paymentId}_paid`;
   return buildBalancedPair({
     entryGroupId: group,
     amount,
     currency,
-    sourceType: 'bank_transfer_manual_review',
+    sourceType: 'manual_transfer_review',
     sourceId: paymentId,
-    debitAccount: 'bank_clearing',
+    debitAccount: clearingAccountForChannel(channel),
     creditAccount: 'customer_receivable',
     actorId,
     orderId,
@@ -76,4 +77,6 @@ function bankTransferLedgerEntries({paymentId, orderId, amount, currency = 'SYP'
   });
 }
 
-module.exports = {LEDGER_DIRECTIONS, PAYMENT_STATUSES, money, buildLedgerEntry, buildBalancedPair, assertPaymentTransition, bankTransferLedgerEntries};
+const bankTransferLedgerEntries = (args) => manualTransferLedgerEntries({...args, channel: 'bank_transfer'});
+
+module.exports = {LEDGER_DIRECTIONS, PAYMENT_STATUSES, money, buildLedgerEntry, buildBalancedPair, assertPaymentTransition, manualTransferLedgerEntries, bankTransferLedgerEntries};

@@ -23,6 +23,13 @@
       "account_number_masked": "",
       "currency": "SYP",
       "instructions_ar": ""
+    },
+    "manual_transfer": {
+      "channels": {
+        "bank_transfer": {"enabled": false, "display_name": "تحويل بنكي", "account_label": "", "instructions": "", "min_amount": 0, "max_amount": 1000000000},
+        "syriatel_cash": {"enabled": false, "display_name": "سيريتل كاش", "account_label": "", "instructions": "", "min_amount": 0, "max_amount": 1000000000},
+        "sham_cash": {"enabled": false, "display_name": "شام كاش", "account_label": "", "instructions": "", "min_amount": 0, "max_amount": 1000000000}
+      }
     }
   },
   "min_app_version": {
