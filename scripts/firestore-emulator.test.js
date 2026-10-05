@@ -128,8 +128,12 @@ async function runRulesMatrix() {
   await allow('admin reads courier overpayment resolution', () => adminDbClient.doc('courier_overpayment_resolutions/resolution_1').get());
   await allow('admin reads financial ledger', () => adminDbClient.doc('financial_ledger/entry_1').get());
   for (const [name, db] of [['guest', guest], ['customer', customer], ['vendor', vendor], ['courier', courier], ['admin', adminDbClient]]) {
-    await deny(`${name} writes courier overpayment resolution`, () => db.doc('courier_overpayment_resolutions/direct_write').set({operation_id: 'bypass'}));
-    await deny(`${name} writes financial ledger`, () => db.doc('financial_ledger/direct_write').set({direction: 'debit', amount: 1}));
+    await deny(`${name} creates courier overpayment resolution`, () => db.doc('courier_overpayment_resolutions/direct_write').set({operation_id: 'bypass'}));
+    await deny(`${name} updates courier overpayment resolution`, () => db.doc('courier_overpayment_resolutions/resolution_1').update({applied: 999}));
+    await deny(`${name} deletes courier overpayment resolution`, () => db.doc('courier_overpayment_resolutions/resolution_1').delete());
+    await deny(`${name} creates financial ledger entry`, () => db.doc('financial_ledger/direct_write').set({direction: 'debit', amount: 1}));
+    await deny(`${name} updates financial ledger entry`, () => db.doc('financial_ledger/entry_1').update({amount: 999}));
+    await deny(`${name} deletes financial ledger entry`, () => db.doc('financial_ledger/entry_1').delete());
   }
 
   // Coupons: no client reads; admin write only.
