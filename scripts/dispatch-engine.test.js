@@ -8,7 +8,8 @@ const far = {id: 'far', current_location: {latitude: 33.60, longitude: 36.40}, u
 assert(courierScore({courier: near, pickupPoint: pickup}).score < courierScore({courier: far, pickupPoint: pickup}).score);
 const zeroLimit = courierScore({courier: {...near, credit_limit: 0, debt: 10}, pickupPoint: pickup});
 assert(Number.isFinite(zeroLimit.score));
-assert.strictEqual(zeroLimit.debtRatio, 0);
+assert.strictEqual(zeroLimit.debtRatio, 1);
+assert.strictEqual(courierScore({courier: {...near, credit_limit: 0, debt: 0}, pickupPoint: pickup}).debtRatio, 0);
 assert.deepStrictEqual(rankCouriers([far, near], {pickupPoint: pickup}).map((x) => x.id), ['near', 'far']);
 assert.strictEqual(rankCouriers([{id: 'missing', current_location: null}], {pickupPoint: pickup}).length, 0);
 console.log('Dispatch engine tests passed.');

@@ -553,7 +553,13 @@ exports.adjustCourierWallet = onCall(async (data, context) => {
   const auditRef = db.collection('audit_logs').doc();
   return db.runTransaction(async (tx) => {
     const idempotencySnap = await tx.get(idempotencyRef);
-    if (idempotencySnap.exists) return {...(idempotencySnap.data()?.response || {}), idempotent_replay: true};
+    if (idempotencySnap.exists) {
+      const original = idempotencySnap.data() || {};
+      if (original.courier_id !== courierId || original.credit_limit !== creditLimit) {
+        throw new HttpsError('failed-precondition', 'مفتاح التكرار مستخدم مسبقاً مع مندوب أو حد ائتمان مختلف');
+      }
+      return {...(original.response || {}), idempotent_replay: true};
+    }
     const walletSnap = await tx.get(walletRef);
     if (!walletSnap.exists) throw new HttpsError('not-found', 'محفظة المندوب غير موجودة');
     const wallet = walletSnap.data() || {};
@@ -568,7 +574,7 @@ exports.adjustCourierWallet = onCall(async (data, context) => {
       details: {before_credit_limit: before, after_credit_limit: creditLimit, reason},
       created_at: FieldValue.serverTimestamp(),
     });
-    tx.create(idempotencyRef, {actor_id: context.auth.uid, courier_id: courierId, idempotency_key: idempotencyKey, response, created_at: FieldValue.serverTimestamp()});
+    tx.create(idempotencyRef, {actor_id: context.auth.uid, courier_id: courierId, credit_limit: creditLimit, idempotency_key: idempotencyKey, response, created_at: FieldValue.serverTimestamp()});
     return {...response, idempotent_replay: false};
   });
 });
