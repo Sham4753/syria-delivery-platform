@@ -12,28 +12,32 @@ service firebase.storage {
     }
     function validImage() {
       return request.resource != null
-        && request.resource.contentType.matches('image/.*')
+        && request.resource.contentType.matches('image/(png|jpeg|webp|gif)')
         && request.resource.size < 5 * 1024 * 1024;
     }
 
     // Public app branding and banners are readable by clients, but only admins upload.
     match /branding/{allPaths=**} {
       allow read: if true;
-      allow write: if admin() && validImage();
+      allow create, update: if admin() && validImage();
+      allow delete: if admin();
     }
     match /banners/{allPaths=**} {
       allow read: if true;
-      allow write: if admin() && validImage();
+      allow create, update: if admin() && validImage();
+      allow delete: if admin();
     }
     match /app-assets/{allPaths=**} {
       allow read: if true;
-      allow write: if admin() && validImage();
+      allow create, update: if admin() && validImage();
+      allow delete: if admin();
     }
 
     // Reserved vendor-owned asset path for vendor dashboard uploads.
     match /vendor-assets/{vendorId}/{allPaths=**} {
       allow read: if true;
-      allow write: if (admin() || vendorManager(vendorId)) && validImage();
+      allow create, update: if (admin() || vendorManager(vendorId)) && validImage();
+      allow delete: if admin() || vendorManager(vendorId);
     }
 
     match /{allPaths=**} {
