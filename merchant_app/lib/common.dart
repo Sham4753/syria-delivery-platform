@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -152,3 +153,20 @@ Future<void> connectToFirebaseEmulators() async {
   appFunctions.useFunctionsEmulator(host, 5001);
 }
 
+Future<void> registerPushToken() async {
+  if (kIsWeb) return;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+  final messaging = FirebaseMessaging.instance;
+  await messaging.requestPermission(alert: true, badge: true, sound: true);
+  Future<void> save(String? token) async {
+    if (token == null || token.isEmpty) return;
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'role': 'vendor_admin',
+      'fcm_token': token,
+      'updated_at': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+  await save(await messaging.getToken());
+  messaging.onTokenRefresh.listen(save);
+}

@@ -242,12 +242,14 @@ Future<void> registerPushToken() async {
   if (user == null) return;
   final messaging = FirebaseMessaging.instance;
   await messaging.requestPermission(alert: true, badge: true, sound: true);
-  final token = await messaging.getToken();
-  if (token != null) {
+  Future<void> save(String? token) async {
+    if (token == null || token.isEmpty) return;
     await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
       'role': 'customer',
       'fcm_token': token,
       'updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
+  await save(await messaging.getToken());
+  messaging.onTokenRefresh.listen(save);
 }

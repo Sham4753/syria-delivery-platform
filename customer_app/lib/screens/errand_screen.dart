@@ -1,5 +1,3 @@
-import 'package:latlong2/latlong.dart';
-
 import '../common.dart';
 import '../location_picker.dart';
 import 'orders_screen.dart';
