@@ -89,3 +89,5 @@ Firebase لا يرفع APK تلقائيًا إلى App Distribution. GitHub Acti
 - لا تعدّل قواعد Firestore أو وظائف الإنتاج قبل تشغيل اختبارات Emulator.
 - استخدم أسماء مجلدات التطبيقات كما هي؛ فهي جزء من Matrix البناء.
 - سجّل أي تغيير تشغيلي في التوثيق القريب من السكربت.
+
+<!-- branch protection direct-push probe -->
