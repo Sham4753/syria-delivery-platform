@@ -60,6 +60,7 @@ async function seed() {
     await db.doc('users/customer_1/loyalty_ledger/entry_1').set({points: 2});
     await db.doc('courier_wallets/courier_1').set({debt: 0});
     await db.doc('courier_wallets/courier_1/ledger/entry_1').set({amount: 100});
+    await db.doc('settlements/settlement_1').set({owner_type: 'courier', owner_id: 'courier_1', vendor_id: null, status: 'approved', overpayment_amount: 25, overpayment_applied: 0});
     await db.doc('courier_overpayment_resolutions/resolution_1').set({operation_id: 'operation_1', settlement_id: 'settlement_1', applied: 25});
     await db.doc('financial_ledger/entry_1').set({entry_group_id: 'group_1', account: 'courier_overpayment_payable', direction: 'debit', amount: 25});
     await db.doc('coupons/TEST10').set({is_active: true, value: 10});
@@ -123,6 +124,8 @@ async function runRulesMatrix() {
   await deny('vendor reads customer topup', () => vendor.doc('wallet_topups/topup_1').get());
   await allow('courier reads own courier wallet', () => courier.doc('courier_wallets/courier_1').get());
   await deny('vendor reads courier wallet', () => vendor.doc('courier_wallets/courier_1').get());
+  await allow('admin reads courier settlement', () => adminDbClient.doc('settlements/settlement_1').get());
+  await allow('courier reads own settlement', () => courier.doc('settlements/settlement_1').get());
   await allow('admin reads courier wallet ledger', () => adminDbClient.doc('courier_wallets/courier_1/ledger/entry_1').get());
   await deny('courier writes courier wallet ledger', () => courier.doc('courier_wallets/courier_1/ledger/new').set({amount: 1}));
   await allow('admin reads courier overpayment resolution', () => adminDbClient.doc('courier_overpayment_resolutions/resolution_1').get());
@@ -134,6 +137,12 @@ async function runRulesMatrix() {
     await deny(`${name} creates financial ledger entry`, () => db.doc('financial_ledger/direct_write').set({direction: 'debit', amount: 1}));
     await deny(`${name} updates financial ledger entry`, () => db.doc('financial_ledger/entry_1').update({amount: 999}));
     await deny(`${name} deletes financial ledger entry`, () => db.doc('financial_ledger/entry_1').delete());
+    await deny(`${name} creates courier wallet`, () => db.doc('courier_wallets/direct_write').set({debt: 999}));
+    await deny(`${name} updates courier debt`, () => db.doc('courier_wallets/courier_1').update({debt: 999}));
+    await deny(`${name} deletes courier wallet`, () => db.doc('courier_wallets/courier_1').delete());
+    await deny(`${name} creates settlement`, () => db.doc('settlements/direct_write').set({owner_type: 'courier', owner_id: 'courier_1', overpayment_amount: 999}));
+    await deny(`${name} updates settlement overpayment`, () => db.doc('settlements/settlement_1').update({overpayment_applied: 999}));
+    await deny(`${name} deletes settlement`, () => db.doc('settlements/settlement_1').delete());
   }
 
   // Coupons: no client reads; admin write only.

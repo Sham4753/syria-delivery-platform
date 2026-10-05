@@ -106,8 +106,8 @@ service cloud.firestore {
     match /wallet_vouchers/{code} { allow read, write: if admin(); }
     match /courier_wallets/{courierId} {
       allow read: if admin() || (signedIn() && request.auth.uid == courierId);
-      allow create: if admin();
-      allow update: if admin();
+      // Wallet balances, debt, and earnings are maintained by trusted server code only.
+      allow create, update, delete: if admin();
       match /settlements/{settlementId} { allow read: if admin() || (signedIn() && request.auth.uid == courierId); allow write: if false; }
       match /ledger/{entryId} { allow read: if admin() || (signedIn() && request.auth.uid == courierId); allow write: if false; }
     }
