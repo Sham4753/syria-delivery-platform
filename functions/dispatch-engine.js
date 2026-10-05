@@ -20,7 +20,8 @@ function distanceKm(aValue, bValue) {
 function courierScore({courier = {}, order = {}, pickupPoint, now = Date.now()}) {
   const distance = distanceKm(courier.current_location, pickupPoint);
   const debt = Math.max(0, Number(courier.debt || 0));
-  const creditLimit = Math.max(1, Number(courier.credit_limit || 100));
+  const rawCreditLimit = Number(courier.credit_limit);
+  const creditLimit = Number.isFinite(rawCreditLimit) ? Math.max(0, rawCreditLimit) : 0;
   const debtRatio = Math.min(1, debt / creditLimit);
   const activeOrders = Math.max(0, Number(courier.active_orders || 0));
   const lastLocation = courier.updated_at?.toMillis?.() || courier.updated_at?.toDate?.()?.getTime?.() || now;

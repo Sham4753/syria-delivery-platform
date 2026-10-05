@@ -79,6 +79,7 @@ async function setup() {
   const other = await login('customer02@test.local');
   const admin = await login('admin@test.local');
   const vendor = await login('vendor@test.local');
+  const courier = await login('courier01@test.local');
   const customerRef = db.doc(`users/${customer.localId}`);
   await customerRef.set({wallet_balance: 1000, loyalty_points: 100, fcm_token: 'integration-invalid-token'}, {merge: true});
   await db.doc('users/' + other.localId).set({wallet_balance: 1000, loyalty_points: 100}, {merge: true});
@@ -93,19 +94,30 @@ async function setup() {
   await db.doc('vendors/restaurant-01/products/meal').set({is_available: true, price: 250}, {merge: true});
   await db.doc('coupons/INTEGRATIONONCE').set({type: 'fixed_amount', value: 100, min_order_amount: 100, expires_at: null, usage_limit_total: 10, usage_limit_per_customer: 1, used_count: 0, is_active: true}, {merge: true});
   await db.doc('coupons/INTEGRATIONEXPIRED').set({type: 'fixed_amount', value: 100, min_order_amount: 100, expires_at: Timestamp.fromMillis(Date.now() - 60_000), usage_limit_total: 10, usage_limit_per_customer: 1, used_count: 0, is_active: true}, {merge: true});
-  return {customer, other, admin, vendor};
+  return {customer, other, admin, vendor, courier};
 }
 async function run() {
   const users = await setup();
-  const {customer, other, admin, vendor} = users;
+  const {customer, other, admin, vendor, courier} = users;
   const customerToken = customer.idToken;
   const otherToken = other.idToken;
   const adminToken = admin.idToken;
   const vendorToken = vendor.idToken;
+  const courierToken = courier.idToken;
 
   // Cash: success, closed store, unavailable product, order above configured limit, idempotency.
   const cashId = await createOrder(customerToken, customer.localId, {idempotency_key: key('cash-success')});
   expect((await order(cashId)).payment_method === 'cash_on_delivery', 'cash order succeeds');
+  expect((await order(cashId)).policy?.readiness_status === 'policy_not_ready' && (await order(cashId)).policy?.debt_formula_version === 'gross_cash_collected_v1', 'createOrder records narrow policy readiness and gross debt formula');
+  await db.doc(`courier_wallets/${courier.localId}`).update({credit_limit: 100});
+  await db.doc(`courier_wallets/${courier.localId}`).update({credit_limit: require('firebase-admin/firestore').FieldValue.delete()});
+  assertError(await call('claimCourierOrder', courierToken, {order_id: cashId}), 'FAILED_PRECONDITION', 'تجاوز المندوب حد الائتمان', 'claimCourierOrder uses unified policy_not_ready fallback 0');
+  await db.doc(`courier_wallets/${courier.localId}`).update({credit_limit: 100});
+  const staffEmail = `policy-courier-${Date.now()}@test.local`;
+  const staff = await call('createStaffAccount', adminToken, {role: 'courier', email: staffEmail, password: PASSWORD, name: 'مندوب سياسة', phone: '0900000999', zone_id: 'zone-1'});
+  assert.equal(staff.response.ok, true, JSON.stringify(staff.body));
+  const staffWallet = (await db.doc(`courier_wallets/${staff.body.result.uid}`).get()).data() || {};
+  expect(staffWallet.credit_limit === 0 && staffWallet.credit_limit_source === 'courier_wallets/{courierId}.credit_limit', 'courier account uses policy fallback 0 and wallet-only credit limit source');
   assertError(await call('createOrder', customerToken, orderData({vendor_id: 'restaurant-02'})), 'FAILED_PRECONDITION', 'المتجر مغلق', 'closed store is rejected');
   await db.doc('vendors/restaurant-01/products/meal').update({is_available: false});
   assertError(await call('createOrder', customerToken, orderData()), 'FAILED_PRECONDITION', 'لم يعد متاحاً', 'unavailable product is rejected');
@@ -155,6 +167,8 @@ async function run() {
   assert.equal(intent.response.ok, true, JSON.stringify(intent.body));
   const paymentId = intent.body.result.payment_id;
   expect(intent.body.result.status === 'awaiting_customer_action', 'manual intent is created for the order');
+  const intentPolicy = (await db.doc(`payment_intents/${paymentId}`).get()).data()?.policy || {};
+  expect(intentPolicy.readiness_status === 'policy_not_ready' && intentPolicy.escalation_mode === 'pending_verification_only', 'manual transfer records narrow policy readiness');
   const proof = await call('submitManualTransferProof', customerToken, {payment_id: paymentId, reference: key('REF'), sender_name: 'عميل الاختبار', note: 'إثبات تكامل'});
   assert.equal(proof.response.ok, true, JSON.stringify(proof.body));
   expect(proof.body.result.status === 'pending_verification', 'manual proof is submitted');
@@ -185,6 +199,7 @@ async function run() {
   const debit = ledger.docs.filter((doc) => doc.data().direction === 'debit').reduce((sum, doc) => sum + Number(doc.data().amount || 0), 0);
   const credit = ledger.docs.filter((doc) => doc.data().direction === 'credit').reduce((sum, doc) => sum + Number(doc.data().amount || 0), 0);
   expect(ledger.size === 2 && debit === credit && debit === Number(paidPayment.amount), 'manual approval creates balanced two-sided ledger');
+  expect(ledger.docs.every((doc) => doc.data()?.policy?.readiness_status === 'policy_not_ready'), 'manual transfer ledger entries carry the narrow policy snapshot');
   const source = fs.readFileSync(require.resolve('../functions/index.js'), 'utf8');
   expect(source.includes('تم اعتماد دفعتك اليدوية بنجاح.'), 'manual approval uses the expected notification message contract');
   assertError(await call('submitManualTransferProof', customerToken, {payment_id: paymentId, reference: key('AFTER-REVIEW')}), 'FAILED_PRECONDITION', 'ليست بانتظار إثبات', 'reference correction after review is rejected');

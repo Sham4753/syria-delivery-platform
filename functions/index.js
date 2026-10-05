@@ -37,6 +37,7 @@ const {isWithinOpeningHours} = require('./time-utils');
 const {normalizeTopUpRequest, consumeTopUpQuotas} = require('./wallet-guard');
 const {sendMerchantFallback} = require('./merchant-alerts');
 const {loyaltyPointsForOrder} = require('./loyalty');
+const {readEffectivePolicy, orderPolicyValues, transferPolicyValues} = require('./policy');
 const {aggregateMerchantReports} = require('./merchant-reports');
 
 initializeApp();
@@ -182,13 +183,15 @@ exports.createStaffAccount = onCall(async (data, context) => {
   if (VENDOR_ROLES.includes(role) && !(await db.doc(`vendors/${vendorId}`).get()).exists) throw new HttpsError('not-found', 'المزود غير موجود');
 
   let userRecord;
+  let courierPolicy;
   try {
+    if (role === 'courier') courierPolicy = await readEffectivePolicy({db});
     userRecord = await getAuth().createUser({email: String(email).trim().toLowerCase(), password: String(password), displayName: name || undefined});
     const batch = db.batch();
     batch.set(db.doc(`users/${userRecord.uid}`), {role, email: userRecord.email, ...(VENDOR_ROLES.includes(role) ? {vendor_id: vendorId} : {}), created_at: FieldValue.serverTimestamp(), created_by: caller.uid});
     if (role === 'courier') {
       batch.set(db.doc(`couriers/${userRecord.uid}`), {name: String(name).trim(), phone: String(phone).trim(), photo_url: String(photoUrl || '').trim(), vehicle_plate: String(vehiclePlate || '').trim(), vehicle_type: String(vehicleType || '').trim(), zone_id: zoneId, is_available: true, created_at: FieldValue.serverTimestamp()});
-      batch.set(db.doc(`courier_wallets/${userRecord.uid}`), {debt: 0, credit_limit: 100, balance: 0, total_earnings: 0, created_at: FieldValue.serverTimestamp()});
+      batch.set(db.doc(`courier_wallets/${userRecord.uid}`), {debt: 0, credit_limit: courierPolicy.creditLimit, credit_limit_source: courierPolicy.creditLimitSource, balance: 0, total_earnings: 0, created_at: FieldValue.serverTimestamp()});
     }
     await batch.commit();
     return {uid: userRecord.uid, role};
@@ -688,7 +691,7 @@ exports.createManualTransferIntent = onCall(async (data, context) => {
   const paymentRef = db.collection('payment_intents').doc();
   let result;
   await db.runTransaction(async (tx) => {
-    const [orderSnap, configSnap] = await Promise.all([tx.get(orderRef), tx.get(publicConfigRef)]);
+    const [orderSnap, configSnap, policy] = await Promise.all([tx.get(orderRef), tx.get(publicConfigRef), readEffectivePolicy({db, tx})]);
     if (!orderSnap.exists || orderSnap.data()?.customer_id !== context.auth.uid) throw new HttpsError('not-found', 'الطلب غير موجود');
     const order = orderSnap.data() || {};
     const orderMethod = manualTransferMethodForOrder(order);
@@ -705,7 +708,7 @@ exports.createManualTransferIntent = onCall(async (data, context) => {
     }
     let amount;
     try { amount = assertAmountWithinChannel(Number(order.total || 0), channelSettings); } catch (error) { throw new HttpsError('failed-precondition', error.message); }
-    tx.create(paymentRef, {order_id: orderId, customer_id: context.auth.uid, method: 'manual_transfer', channel, provider_id: `manual_${channel}`, provider_reference: paymentRef.id, amount, currency: String(configSnap.data()?.bank_transfer?.currency || 'SYP'), status: 'awaiting_customer_action', created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: 1, reference_attempts: 0});
+    tx.create(paymentRef, {order_id: orderId, customer_id: context.auth.uid, method: 'manual_transfer', channel, provider_id: `manual_${channel}`, provider_reference: paymentRef.id, amount, currency: String(configSnap.data()?.bank_transfer?.currency || 'SYP'), status: 'awaiting_customer_action', policy: transferPolicyValues(policy), created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: 1, reference_attempts: 0});
     tx.update(orderRef, {payment_status: 'pending', payment_intent_id: paymentRef.id, updated_at: FieldValue.serverTimestamp()});
     result = {payment_id: paymentRef.id, status: 'awaiting_customer_action', reused: false};
   });
@@ -773,7 +776,7 @@ exports.reviewManualTransfer = onCall(async (data, context) => {
   if (hasExpectedAttempt && (!Number.isInteger(expectedAttempt) || expectedAttempt < 0)) throw new HttpsError('invalid-argument', 'محاولة المرجع المتوقعة غير صالحة');
   const paymentRef = db.doc(`payment_intents/${paymentId}`);
   await db.runTransaction(async (tx) => {
-    const paymentSnap = await tx.get(paymentRef);
+    const [paymentSnap, policy] = await Promise.all([tx.get(paymentRef), readEffectivePolicy({db, tx})]);
     if (!paymentSnap.exists) throw new HttpsError('not-found', 'عملية الدفع غير موجودة');
     const payment = paymentSnap.data() || {};
     if (payment.status !== 'pending_verification') throw new HttpsError('failed-precondition', 'عملية الدفع ليست بانتظار المراجعة');
@@ -794,11 +797,11 @@ exports.reviewManualTransfer = onCall(async (data, context) => {
     const reviewEventRef = db.collection('payment_events').doc();
     const reviewChannel = payment.method === 'bank_transfer' ? 'bank_transfer' : payment.channel;
     if (!CHANNELS.includes(reviewChannel)) throw new HttpsError('failed-precondition', 'قناة التحويل غير صالحة');
-    tx.create(reviewEventRef, {payment_id: paymentId, order_id: payment.order_id, type: decision === 'approve' ? 'approved' : 'rejected', action: 'manual_transfer_review', channel: reviewChannel, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, amount_verified: amountVerified, reviewer: context.auth.uid, actor_id: context.auth.uid, reason: reason || null, created_at: FieldValue.serverTimestamp()});
-    tx.create(db.collection('audit_logs').doc(), {action: 'manual_transfer_review', channel: reviewChannel, payment_id: paymentId, order_id: payment.order_id, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, amount_verified: amountVerified, reviewer: context.auth.uid, actor_id: context.auth.uid, reason: reason || null, created_at: FieldValue.serverTimestamp()});
+    tx.create(reviewEventRef, {payment_id: paymentId, order_id: payment.order_id, type: decision === 'approve' ? 'approved' : 'rejected', action: 'manual_transfer_review', channel: reviewChannel, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, amount_verified: amountVerified, reviewer: context.auth.uid, actor_id: context.auth.uid, reason: reason || null, policy: transferPolicyValues(policy), created_at: FieldValue.serverTimestamp()});
+    tx.create(db.collection('audit_logs').doc(), {action: 'manual_transfer_review', channel: reviewChannel, payment_id: paymentId, order_id: payment.order_id, reference_hash: payment.reference_hash || null, amount: payment.amount, currency: payment.currency, decision, amount_verified: amountVerified, reviewer: context.auth.uid, actor_id: context.auth.uid, reason: reason || null, policy: transferPolicyValues(policy), created_at: FieldValue.serverTimestamp()});
     if (decision === 'approve') {
       const entries = manualTransferLedgerEntries({paymentId, orderId: payment.order_id, amount: payment.amount, currency: payment.currency, channel: reviewChannel, actorId: context.auth.uid});
-      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, created_at: FieldValue.serverTimestamp()});
+      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, policy: transferPolicyValues(policy), created_at: FieldValue.serverTimestamp()});
     }
   });
   const reviewedPayment = (await paymentRef.get()).data() || {};
@@ -816,7 +819,7 @@ async function applyProviderEvent(event, paymentRef, eventRef) {
   const nextStatus = providerStatusForEvent(event.type);
   const orderRef = db.doc(`orders/${payment.order_id}`);
   const result = await db.runTransaction(async (tx) => {
-    const [eventSnap, currentPaymentSnap, orderSnap] = await Promise.all([tx.get(eventRef), tx.get(paymentRef), tx.get(orderRef)]);
+    const [eventSnap, currentPaymentSnap, orderSnap, policy] = await Promise.all([tx.get(eventRef), tx.get(paymentRef), tx.get(orderRef), readEffectivePolicy({db, tx})]);
     if (eventSnap.exists) return {duplicate: true, status: currentPaymentSnap.data()?.status};
     if (!currentPaymentSnap.exists || !orderSnap.exists) throw new Error('payment_or_order_not_found');
     const current = currentPaymentSnap.data() || {};
@@ -834,7 +837,7 @@ async function applyProviderEvent(event, paymentRef, eventRef) {
       if (nextStatus === 'refunded') tx.update(orderRef, {payment_status: 'refunded', refunded_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
       if (nextStatus === 'paid' || nextStatus === 'refunded') {
         const entries = providerLedgerEntries({paymentId: paymentRef.id, orderId: payment.order_id, amount: payment.amount, currency: payment.currency, status: nextStatus, providerReference: event.providerReference});
-        for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, created_at: FieldValue.serverTimestamp()});
+        for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, policy: transferPolicyValues(policy), created_at: FieldValue.serverTimestamp()});
       }
     }
     tx.create(eventRef, {event_id: event.id, type: event.type, payment_id: paymentRef.id, provider_reference: event.providerReference, amount: event.amount, currency: event.currency, applied: transitioned, received_at: FieldValue.serverTimestamp()});
@@ -1021,11 +1024,13 @@ async function offerNextCourier(orderId) {
     const locationAt = courier.last_location_at?.toDate?.()?.getTime?.() || 0;
     return !attempted.has(doc.id) && pointOf(courier.current_location) && locationAt > Date.now() - 10 * 60 * 1000;
   });
+  const policy = await readEffectivePolicy({db});
   const enriched = await Promise.all(eligible.map(async (doc) => {
     const wallet = (await db.doc(`courier_wallets/${doc.id}`).get()).data() || {};
-    if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 100)) return null;
+    const effectiveCreditLimit = Number.isFinite(Number(wallet.credit_limit)) ? Number(wallet.credit_limit) : policy.creditLimit;
+    if (Number(wallet.debt || 0) >= effectiveCreditLimit) return null;
     const active = await db.collection('orders').where('courier_id', '==', doc.id).where('status', 'in', ['picked_up', 'on_the_way']).limit(3).get();
-    return {id: doc.id, data: () => ({...doc.data(), debt: wallet.debt, credit_limit: wallet.credit_limit, active_orders: active.size})};
+    return {id: doc.id, data: () => ({...doc.data(), debt: wallet.debt, credit_limit: effectiveCreditLimit, active_orders: active.size})};
   })).then((entries) => entries.filter(Boolean));
   const ranked = rankCouriers(enriched, {order, pickupPoint, limit: 3});
   if (!ranked.length) {
@@ -1072,12 +1077,13 @@ exports.claimCourierOrder = onCall(async (data, context) => {
   await db.runTransaction(async (tx) => {
     const [orderSnap, courierSnap, walletSnap, offerSnap] = await Promise.all([tx.get(orderRef), tx.get(courierRef), tx.get(walletRef), tx.get(offerRef)]);
     const order = orderSnap.data() || {}; const courier = courierSnap.data() || {}; const wallet = walletSnap.data() || {};
+    const policy = await readEffectivePolicy({db, tx});
     if (!orderSnap.exists || !['pending', 'preparing', 'ready_for_pickup'].includes(order.status) || order.courier_id) throw new HttpsError('failed-precondition', 'الطلب لم يعد متاحاً للإسناد');
     if (courier.is_available !== true || courier.zone_id !== order.zone_id) throw new HttpsError('failed-precondition', 'المندوب غير متاح لهذه المنطقة');
     if (Array.isArray(order.dispatch_candidates) && order.dispatch_candidates.length > 0 && !order.dispatch_candidates.includes(uid)) throw new HttpsError('permission-denied', 'لم يتم عرض هذا الطلب على المندوب');
     const activeOrders = await db.collection('orders').where('courier_id', '==', uid).where('status', 'in', ['picked_up', 'on_the_way']).limit(3).get();
     if (activeOrders.size >= 2) throw new HttpsError('resource-exhausted', 'وصلت إلى الحد الأقصى للطلبات النشطة');
-    if (Number(wallet.debt || 0) >= Number(wallet.credit_limit || 0)) throw new HttpsError('failed-precondition', 'تجاوز المندوب حد الائتمان');
+    if (Number(wallet.debt || 0) >= (Number.isFinite(Number(wallet.credit_limit)) ? Number(wallet.credit_limit) : policy.creditLimit)) throw new HttpsError('failed-precondition', 'تجاوز المندوب حد الائتمان');
     const requiresOffer = Array.isArray(order.dispatch_offer_ids) && order.dispatch_offer_ids.length > 0;
     if (requiresOffer && (!offerSnap.exists || offerSnap.data()?.status !== 'offered' || (offerSnap.data()?.expires_at?.toDate?.()?.getTime?.() || 0) <= Date.now())) throw new HttpsError('failed-precondition', 'انتهت مهلة عرض الإسناد');
     if (offerSnap.exists && offerSnap.data()?.status === 'offered') tx.update(offerRef, {status: 'accepted', responded_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
@@ -1238,6 +1244,7 @@ exports.createOrder = onCall(async (data, context) => {
 
   const result = await db.runTransaction(async (tx) => {
     const now = Date.now();
+    const policy = await readEffectivePolicy({db, tx});
     const configRef = db.doc('system_config/main'); const [idempotencySnap, rateSnap, vendorSnap, zoneSnap, userSnap, configSnap, ...productSnaps] = await Promise.all([
       tx.get(idempotencyRef), tx.get(rateRef), tx.get(vendorRef), tx.get(zoneRef), tx.get(userRef), tx.get(configRef), ...productRefs.map((ref) => tx.get(ref)),
     ]);
@@ -1317,7 +1324,7 @@ exports.createOrder = onCall(async (data, context) => {
       coupon_code: discount > 0 ? couponCode : null, coupon_applied: discount > 0, discount_amount: discount, loyalty_discount_redeemed: pointsDiscount, total: totalBeforePayment,
       idempotency_key: idempotencyKey,
       status: 'pending', courier_id: null, fulfillment_type: 'delivery', payment_method: paymentMethod, payment_channel: paymentChannel, payment_status: paymentMethod === 'manual_transfer' ? 'pending' : (cashDue === 0 ? 'paid' : 'unpaid'), wallet_amount: walletUsed, loyalty_points_used: pointsUsed, cash_due: cashDue, cash_change_for: cashChangeFor,
-      delivery_address: {...address}, landmark: String(address.landmark || ''), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
+      delivery_address: {...address}, landmark: String(address.landmark || ''), policy: orderPolicyValues(policy), emergency_mode_seen: userData.emergency_mode_seen || false, loyalty_points_earned: 0,
       created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), synced: true, free_delivery_applied: freeDelivery,
     });
     if (emulatorOnly && smokeFailAfterOrderWrite) {
