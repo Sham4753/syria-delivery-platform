@@ -696,6 +696,7 @@ exports.resolveCourierOverpayment = onCall(async (data, context) => {
     if (resolutionSnap.exists) {
       const previous = resolutionSnap.data() || {};
       if (previous.settlement_id !== settlementId || previous.actor_id !== context.auth.uid) throw new HttpsError('already-exists', 'مفتاح العملية مستخدم لعملية أخرى');
+      if (Object.prototype.hasOwnProperty.call(previous, 'requested_amount') && previous.requested_amount !== requestedAmount) throw new HttpsError('failed-precondition', 'مفتاح العملية مستخدم بمبلغ مختلف');
       applied = Number(previous.applied || 0);
       remainingPayable = Number(previous.remaining_payable || 0);
       replayed = true;
@@ -718,7 +719,7 @@ exports.resolveCourierOverpayment = onCall(async (data, context) => {
     const entries = courierOverpaymentLedgerEntries({resolutionId, amount: applied, actorId: context.auth.uid, ownerId: settlement.owner_id, settlementId});
     tx.set(walletRef, {debt: application.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
     tx.update(settlementRef, {overpayment_applied: appliedBefore + applied, overpayment_remaining: remainingPayable, updated_at: FieldValue.serverTimestamp()});
-    tx.create(resolutionRef, {operation_id: operationId, settlement_id: settlementId, actor_id: context.auth.uid, courier_id: settlement.owner_id, applied, remaining_payable: remainingPayable, action: 'apply_to_debt', created_at: FieldValue.serverTimestamp()});
+    tx.create(resolutionRef, {operation_id: operationId, settlement_id: settlementId, actor_id: context.auth.uid, courier_id: settlement.owner_id, requested_amount: requestedAmount, applied, remaining_payable: remainingPayable, action: 'apply_to_debt', created_at: FieldValue.serverTimestamp()});
     for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settlement.shift_id, owner_type: settlement.owner_type, owner_id: settlement.owner_id, created_at: FieldValue.serverTimestamp()});
   });
   return {settlement_id: settlementId, applied, remaining_payable: remainingPayable, action: 'apply_to_debt', replayed};

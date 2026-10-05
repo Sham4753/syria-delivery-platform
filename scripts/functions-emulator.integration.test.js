@@ -261,12 +261,14 @@ async function run() {
     call('resolveCourierOverpayment', adminToken, {settlement_id: differentOperationSettlementId, operation_id: key('overpayment-op-a'), amount: 40}),
     call('resolveCourierOverpayment', adminToken, {settlement_id: differentOperationSettlementId, operation_id: key('overpayment-op-b'), amount: 40}),
   ]);
-  expect(differentOperationResolutions.filter(result => result.response.ok && result.body.result?.applied === 25).length === 1, 'concurrent different operations apply the surplus only once');
+  const differentOperationAppliedTotal = differentOperationResolutions.reduce((total, result) => total + (result.response.ok ? Number(result.body.result?.applied || 0) : 0), 0);
+  expect(differentOperationAppliedTotal === 25, 'concurrent different operations apply the surplus only once');
   expect(differentOperationResolutions.filter(result => errorOf(result).status === 'FAILED_PRECONDITION').length === 1, 'concurrent different operations reject the second debt-free application');
   const differentOperationSettlement = (await db.doc(`settlements/${differentOperationSettlementId}`).get()).data() || {};
-  expect(Number(differentOperationSettlement.overpayment_applied) === 25 && Number(differentOperationSettlement.overpayment_remaining) === 15, 'different-operation race preserves the remaining surplus');
+  const differentOperationWallet = (await db.doc(`courier_wallets/${courier.localId}`).get()).data() || {};
+  expect(Number(differentOperationSettlement.overpayment_applied) === 25 && Number(differentOperationSettlement.overpayment_remaining) === 15 && Number(differentOperationWallet.debt) === 0, 'different-operation race preserves the remaining surplus and clears debt exactly once');
   const differentOperationLedger = await db.collection('financial_ledger').where('settlement_id', '==', differentOperationSettlementId).get();
-  expect(differentOperationLedger.size === 2, 'different-operation race writes one balanced ledger pair');
+  expect(differentOperationLedger.size === 2 && differentOperationLedger.docs.filter(doc => doc.data()?.direction === 'debit' && Number(doc.data()?.amount) > 0).length === 1, 'different-operation race writes one balanced ledger pair with one positive debit entry');
 
   const differentAmountSettlementId = key('overpayment-different-amount-settlement');
   const differentAmountOperationId = key('overpayment-different-amount-op');
@@ -276,9 +278,9 @@ async function run() {
     call('resolveCourierOverpayment', adminToken, {settlement_id: differentAmountSettlementId, operation_id: differentAmountOperationId, amount: 10}),
     call('resolveCourierOverpayment', adminToken, {settlement_id: differentAmountSettlementId, operation_id: differentAmountOperationId, amount: 40}),
   ]);
-  expect(differentAmountResolutions.every(result => result.response.ok), 'same operation with different amounts remains successful and idempotent');
-  const differentAmountApplied = differentAmountResolutions[0].body.result?.applied;
-  expect(differentAmountResolutions.every(result => result.body.result?.applied === differentAmountApplied), 'same operation with different amounts replays the first committed amount');
+  expect(differentAmountResolutions.filter(result => result.response.ok).length === 1 && differentAmountResolutions.filter(result => errorOf(result).status === 'FAILED_PRECONDITION').length === 1, 'same operation with different amounts rejects the conflicting replay');
+  const differentAmountApplied = differentAmountResolutions.find(result => result.response.ok)?.body.result?.applied;
+  expect(Number.isFinite(Number(differentAmountApplied)) && Number(differentAmountApplied) > 0, 'same operation with different amounts keeps the first committed amount');
   const differentAmountSettlement = (await db.doc(`settlements/${differentAmountSettlementId}`).get()).data() || {};
   expect(Number(differentAmountSettlement.overpayment_applied) === Number(differentAmountApplied), 'same operation with different amounts applies only once');
   const differentAmountLedger = await db.collection('financial_ledger').where('settlement_id', '==', differentAmountSettlementId).get();
