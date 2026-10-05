@@ -59,6 +59,15 @@ function assertError(result, status, message, label) {
 }
 async function resetRate(uid) { await db.doc(`order_rate_limits/${uid}`).delete(); }
 async function order(id) { return (await db.doc(`orders/${id}`).get()).data() || {}; }
+async function waitFor(check, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await check();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error('Timed out waiting for emulator state');
+}
 async function createOrder(token, uid, overrides = {}) {
   await resetRate(uid);
   const result = await call('createOrder', token, orderData(overrides));
@@ -89,7 +98,7 @@ async function setup() {
       syriatel_cash: {enabled: false, min_amount: 300, max_amount: 1000},
   });
   await db.doc('public_payment_config/main').set({bank_transfer: {enabled: true, currency: 'SYP'}}, {merge: true});
-  await db.doc('vendors/restaurant-01').set({opening_hours: {open: '00:00', close: '23:59'}, is_busy: false, is_active: true}, {merge: true});
+  await db.doc('vendors/restaurant-01').set({opening_hours: {open: '00:00', close: '23:59'}, is_busy: false, is_active: true, location: {latitude: 33.5138, longitude: 36.2765}}, {merge: true});
   await db.doc('vendors/restaurant-02').set({opening_hours: {open: '25:00', close: '25:01'}, is_busy: false, is_active: true}, {merge: true});
   await db.doc('vendors/restaurant-01/products/meal').set({is_available: true, price: 250}, {merge: true});
   await db.doc('coupons/INTEGRATIONONCE').set({type: 'fixed_amount', value: 100, min_order_amount: 100, expires_at: null, usage_limit_total: 10, usage_limit_per_customer: 1, used_count: 0, is_active: true}, {merge: true});
@@ -116,8 +125,43 @@ async function run() {
   const staffEmail = `policy-courier-${Date.now()}@test.local`;
   const staff = await call('createStaffAccount', adminToken, {role: 'courier', email: staffEmail, password: PASSWORD, name: 'مندوب سياسة', phone: '0900000999', zone_id: 'zone-1'});
   assert.equal(staff.response.ok, true, JSON.stringify(staff.body));
-  const staffWallet = (await db.doc(`courier_wallets/${staff.body.result.uid}`).get()).data() || {};
+  const staffId = staff.body.result.uid;
+  const staffWalletRef = db.doc(`courier_wallets/${staffId}`);
+  const staffWallet = (await staffWalletRef.get()).data() || {};
   expect(staffWallet.credit_limit === 0 && staffWallet.credit_limit_source === 'courier_wallets/{courierId}.credit_limit', 'courier account uses policy fallback 0 and wallet-only credit limit source');
+  const adjustKey = key('credit-adjust');
+  const adjusted = await call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 250, reason: 'بدء عمل المندوب', idempotency_key: adjustKey});
+  assert.equal(adjusted.response.ok, true, JSON.stringify(adjusted.body));
+  expect(adjusted.body.result.credit_limit === 250 && adjusted.body.result.idempotent_replay === false, 'admin can grant a positive courier credit limit');
+  const afterAdjust = (await staffWalletRef.get()).data() || {};
+  expect(afterAdjust.credit_limit === 250 && afterAdjust.debt === 0 && afterAdjust.balance === 0, 'credit adjustment changes only credit_limit and preserves debt and balance');
+  const auditAfterAdjust = await db.collection('audit_logs').where('action', '==', 'adjust_courier_credit_limit').where('target', '==', `courier_wallets/${staffId}`).get();
+  expect(auditAfterAdjust.size === 1 && auditAfterAdjust.docs[0].data().details.reason === 'بدء عمل المندوب' && auditAfterAdjust.docs[0].data().details.before_credit_limit === 0 && auditAfterAdjust.docs[0].data().details.after_credit_limit === 250, 'credit adjustment writes before-after audit details');
+  assertError(await call('adjustCourierWallet', vendorToken, {courier_id: staffId, credit_limit: 300, reason: 'محاولة غير مصرح بها', idempotency_key: key('credit-denied')}), 'PERMISSION_DENIED', 'غير مسموح', 'non-admin cannot adjust courier credit limit');
+  assertError(await call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 300, reason: '', idempotency_key: key('credit-empty-reason')}), 'INVALID_ARGUMENT', 'سبب التعديل', 'empty credit adjustment reason is rejected');
+  assertError(await call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 1000000001, reason: 'خارج الحدود', idempotency_key: key('credit-out-of-range')}), 'INVALID_ARGUMENT', 'ضمن الحدود', 'credit limit above policy maximum is rejected');
+  const creditReplay = await call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 250, reason: 'سبب مختلف لا يغير الأثر', idempotency_key: adjustKey});
+  expect(creditReplay.response.ok && creditReplay.body.result.idempotent_replay === true && (await staffWalletRef.get()).data().credit_limit === 250, 'repeating credit adjustment key has no effect');
+  assertError(await call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 999, reason: 'يجب رفضه', idempotency_key: adjustKey}), 'FAILED_PRECONDITION', 'مندوب أو حد ائتمان مختلف', 'idempotency key rejects a different credit limit');
+  await Promise.all(Array.from({length: 10}, () => call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 400, reason: 'تزامن', idempotency_key: key('credit-concurrent')})));
+  expect((await db.collection('audit_logs').where('action', '==', 'adjust_courier_credit_limit').where('target', '==', `courier_wallets/${staffId}`).get()).size === 11, 'concurrent unique credit adjustments commit one audit per key');
+  const sameKey = key('credit-same-key');
+  const sameKeyResults = await Promise.all(Array.from({length: 10}, () => call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 450, reason: 'تزامن بنفس المفتاح', idempotency_key: sameKey})));
+  const sameKeyReplays = sameKeyResults.filter((result) => result.response.ok && result.body.result?.idempotent_replay === true).length;
+  const sameKeyAudits = await db.collection('audit_logs').where('action', '==', 'adjust_courier_credit_limit').where('target', '==', `courier_wallets/${staffId}`).get();
+  const sameKeyAdjustments = await db.collection('courier_wallet_adjustments').where('idempotency_key', '==', sameKey).get();
+  expect(sameKeyResults.every((result) => result.response.ok) && sameKeyReplays === 9, 'same-key concurrent adjustments return one initial response and nine replays');
+  expect(sameKeyAudits.docs.filter((doc) => doc.data().details?.after_credit_limit === 450 && doc.data().details?.reason === 'تزامن بنفس المفتاح').length === 1, 'same-key concurrent adjustments write one audit record');
+  expect(sameKeyAdjustments.size === 1, 'same-key concurrent adjustments write one idempotency record');
+  assertError(await call('adjustCourierWallet', adminToken, {courier_id: staffId, credit_limit: 451, reason: 'تعارض الحد', idempotency_key: sameKey}), 'FAILED_PRECONDITION', 'مندوب أو حد ائتمان مختلف', 'idempotency key rejects a different credit limit');
+  assertError(await call('adjustCourierWallet', adminToken, {courier_id: courier.localId, credit_limit: 450, reason: 'تعارض المندوب', idempotency_key: sameKey}), 'FAILED_PRECONDITION', 'مندوب أو حد ائتمان مختلف', 'idempotency key rejects a different courier');
+  await db.doc(`couriers/${courier.localId}`).update({is_available: false});
+  await db.doc(`couriers/${staffId}`).update({current_location: {latitude: 33.5138, longitude: 36.2765}, last_location_at: Timestamp.now(), is_available: true});
+  const assignedOrderId = await createOrder(customerToken, customer.localId, {idempotency_key: key('credit-claim')});
+  await waitFor(async () => (await order(assignedOrderId)).dispatch_candidates?.includes(staffId));
+  const claim = await call('claimCourierOrder', await login(staffEmail).then((session) => session.idToken), {order_id: assignedOrderId});
+  assert.equal(claim.response.ok, true, JSON.stringify(claim.body));
+  expect((await order(assignedOrderId)).courier_id === staffId, 'new courier with positive credit limit is offered and can claim an order');
   assertError(await call('createOrder', customerToken, orderData({vendor_id: 'restaurant-02'})), 'FAILED_PRECONDITION', 'المتجر مغلق', 'closed store is rejected');
   await db.doc('vendors/restaurant-01/products/meal').update({is_available: false});
   assertError(await call('createOrder', customerToken, orderData()), 'FAILED_PRECONDITION', 'لم يعد متاحاً', 'unavailable product is rejected');

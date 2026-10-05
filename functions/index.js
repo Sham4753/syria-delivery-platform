@@ -37,7 +37,7 @@ const {isWithinOpeningHours} = require('./time-utils');
 const {normalizeTopUpRequest, consumeTopUpQuotas} = require('./wallet-guard');
 const {sendMerchantFallback} = require('./merchant-alerts');
 const {loyaltyPointsForOrder} = require('./loyalty');
-const {readEffectivePolicy, orderPolicyValues, transferPolicyValues} = require('./policy');
+const {POLICY_REGISTRY, readEffectivePolicy, orderPolicyValues, transferPolicyValues} = require('./policy');
 const {aggregateMerchantReports} = require('./merchant-reports');
 
 initializeApp();
@@ -532,6 +532,51 @@ exports.publishPaymentProviderSettings = onCall(async (data, context) => {
     return {version};
   });
   return {status: 'published', ...result, provider_id: settings.provider_id, enabled: settings.enabled};
+});
+
+exports.adjustCourierWallet = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['super_admin']);
+  const courierId = String(data?.courier_id || '').trim();
+  const reason = String(data?.reason || '').trim();
+  const idempotencyKey = String(data?.idempotency_key || '').trim();
+  const creditLimit = data?.credit_limit;
+  if (!courierId || typeof creditLimit !== 'number' || !Number.isFinite(creditLimit)
+    || creditLimit < POLICY_REGISTRY.credit_limit.min || creditLimit > POLICY_REGISTRY.credit_limit.max) {
+    throw new HttpsError('invalid-argument', 'معرّف المندوب وحد الائتمان ضمن الحدود مطلوبان');
+  }
+  if (!reason || reason.length > 300) throw new HttpsError('invalid-argument', 'سبب التعديل مطلوب وبحد أقصى 300 حرف');
+  if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) throw new HttpsError('invalid-argument', 'مفتاح التكرار غير صالح');
+
+  const walletRef = db.doc(`courier_wallets/${courierId}`);
+  const idempotencyRef = db.doc(`courier_wallet_adjustments/${createHash('sha256').update(`${context.auth.uid}:${idempotencyKey}`).digest('hex').slice(0, 40)}`);
+  const auditRef = db.collection('audit_logs').doc();
+  return db.runTransaction(async (tx) => {
+    const idempotencySnap = await tx.get(idempotencyRef);
+    if (idempotencySnap.exists) {
+      const original = idempotencySnap.data() || {};
+      if (original.courier_id !== courierId || original.credit_limit !== creditLimit) {
+        throw new HttpsError('failed-precondition', 'مفتاح التكرار مستخدم مسبقاً مع مندوب أو حد ائتمان مختلف');
+      }
+      return {...(original.response || {}), idempotent_replay: true};
+    }
+    const walletSnap = await tx.get(walletRef);
+    if (!walletSnap.exists) throw new HttpsError('not-found', 'محفظة المندوب غير موجودة');
+    const wallet = walletSnap.data() || {};
+    const before = Number.isFinite(Number(wallet.credit_limit)) ? Number(wallet.credit_limit) : 0;
+    const response = {courier_id: courierId, credit_limit: creditLimit};
+    tx.update(walletRef, {credit_limit: creditLimit});
+    tx.create(auditRef, {
+      actor_id: context.auth.uid,
+      actor_email: context.auth.token?.email || null,
+      action: 'adjust_courier_credit_limit',
+      target: `courier_wallets/${courierId}`,
+      details: {before_credit_limit: before, after_credit_limit: creditLimit, reason},
+      created_at: FieldValue.serverTimestamp(),
+    });
+    tx.create(idempotencyRef, {actor_id: context.auth.uid, courier_id: courierId, credit_limit: creditLimit, idempotency_key: idempotencyKey, response, created_at: FieldValue.serverTimestamp()});
+    return {...response, idempotent_replay: false};
+  });
 });
 
 function isVendorOpen(vendor, now = new Date()) {

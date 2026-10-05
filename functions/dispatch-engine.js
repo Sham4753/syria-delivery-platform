@@ -22,7 +22,7 @@ function courierScore({courier = {}, order = {}, pickupPoint, now = Date.now()})
   const debt = Math.max(0, Number(courier.debt || 0));
   const rawCreditLimit = Number(courier.credit_limit);
   const creditLimit = Number.isFinite(rawCreditLimit) ? Math.max(0, rawCreditLimit) : 0;
-  const debtRatio = Math.min(1, debt / creditLimit);
+  const debtRatio = creditLimit > 0 ? Math.min(1, debt / creditLimit) : (debt > 0 ? 1 : 0);
   const activeOrders = Math.max(0, Number(courier.active_orders || 0));
   const lastLocation = courier.updated_at?.toMillis?.() || courier.updated_at?.toDate?.()?.getTime?.() || now;
   const staleMinutes = Math.max(0, (now - lastLocation) / 60000);
