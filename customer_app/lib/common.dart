@@ -247,6 +247,7 @@ Future<void> registerPushToken() async {
   Future<void> save(String? token) async {
     if (token == null || token.isEmpty) return;
     await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'role': 'customer',
       'fcm_token': token,
       'updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
