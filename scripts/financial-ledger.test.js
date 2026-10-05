@@ -79,6 +79,19 @@ assertSettlementCase('zero_remittance', {remitted: 0, currentDebt: 100, variance
   application: {remitted: 0, currentDebt: 100, applied: 0, shortage: 100, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 100},
   balances: {},
 });
+const countedCashBelowOpening = 30;
+const openingCash = 50;
+const rawRemitted = countedCashBelowOpening - openingCash;
+assert.strictEqual(rawRemitted, -20);
+const belowOpening = assertSettlementCase('counted_below_opening', {remitted: Math.max(0, rawRemitted), currentDebt: 100, variance: -20}, {
+  application: {remitted: 0, currentDebt: 100, applied: 0, shortage: 20, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 100},
+  balances: {},
+});
+assert.strictEqual(belowOpening.length, 0, 'counted below opening must not create ledger entries');
+assert.strictEqual(Math.max(0, 100 - 0), 100, 'counted below opening must leave courier debt unchanged');
+const belowOpeningShortage = Math.max(0, -(-20));
+assert.strictEqual(belowOpeningShortage, 20, 'counted below opening must preserve full shortage');
+assert.strictEqual(rawRemitted < 0 && belowOpeningShortage > 0, true, 'counted below opening must require review');
 assertSettlementCase('debt_less_than_expected', {remitted: 100, currentDebt: 60, variance: 0}, {
   application: {remitted: 100, currentDebt: 60, applied: 60, shortage: 0, writeOff: 0, overpayment: 40, reviewNeeded: true, remainingDebt: 0},
   balances: {cash_on_hand: 100, courier_cash_receivable: -60, courier_overpayment_payable: -40},

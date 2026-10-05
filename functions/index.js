@@ -656,14 +656,17 @@ exports.approveSettlement = onCall(async (data, context) => {
     const settlementUpdate = {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), review_needed: false};
     if (settled.owner_type === 'courier' && settled.owner_id) {
       const walletRef = db.doc(`courier_wallets/${settled.owner_id}`);
-      const remitted = Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0);
-      if (!Number.isFinite(remitted) || remitted < 0) throw new HttpsError('failed-precondition', 'المبلغ المسلم أقل من الرصيد الافتتاحي');
+      const rawRemitted = Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0);
+      if (!Number.isFinite(rawRemitted)) throw new HttpsError('failed-precondition', 'المبلغ المسلم غير صالح');
+      const remitted = Math.max(0, rawRemitted);
       const walletSnap = await tx.get(walletRef);
       const currentDebt = Math.max(0, Number(walletSnap.data()?.debt || 0));
-      const application = settlementApplication({remitted, currentDebt, variance: settled.variance, writeOffShortage});
-      settlementUpdate.review_needed = application.reviewNeeded;
+      const shortage = Math.max(0, -Number(settled.variance || 0));
+      const application = settlementApplication({remitted, currentDebt, variance: settled.variance, writeOffShortage: writeOffShortage && rawRemitted >= 0});
+      settlementUpdate.shortage = shortage;
+      settlementUpdate.review_needed = application.reviewNeeded || (rawRemitted < 0 && shortage > 0);
       tx.set(walletRef, {debt: application.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
-      const entries = settlementLedgerEntries({settlementId, remitted, currentDebt, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id, writeOffShortage});
+      const entries = settlementLedgerEntries({settlementId, remitted, currentDebt, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id, writeOffShortage: writeOffShortage && rawRemitted >= 0});
       for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
     }
     tx.update(settlementRef, settlementUpdate);
