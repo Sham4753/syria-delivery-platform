@@ -91,3 +91,5 @@ Firebase لا يرفع APK تلقائيًا إلى App Distribution. GitHub Acti
 - سجّل أي تغيير تشغيلي في التوثيق القريب من السكربت.
 
 <!-- branch protection direct-push probe -->
+
+<!-- branch protection PR probe -->
