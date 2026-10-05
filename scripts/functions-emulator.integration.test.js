@@ -254,6 +254,38 @@ async function run() {
   const resolutionLedger = await db.collection('financial_ledger').where('settlement_id', '==', overpaymentSettlementId).get();
   expect(resolutionLedger.size === 2, 'idempotent overpayment resolution writes one balanced ledger pair');
 
+  const differentOperationSettlementId = key('overpayment-different-ops-settlement');
+  await db.doc(`settlements/${differentOperationSettlementId}`).set({status: 'approved', owner_type: 'courier', owner_id: courier.localId, shift_id: 'integration-shift-different-ops', overpayment_amount: 40, overpayment_applied: 0, overpayment_remaining: 40});
+  await db.doc(`courier_wallets/${courier.localId}`).set({debt: 25}, {merge: true});
+  const differentOperationResolutions = await Promise.all([
+    call('resolveCourierOverpayment', adminToken, {settlement_id: differentOperationSettlementId, operation_id: key('overpayment-op-a'), amount: 40}),
+    call('resolveCourierOverpayment', adminToken, {settlement_id: differentOperationSettlementId, operation_id: key('overpayment-op-b'), amount: 40}),
+  ]);
+  const differentOperationAppliedTotal = differentOperationResolutions.reduce((total, result) => total + (result.response.ok ? Number(result.body.result?.applied || 0) : 0), 0);
+  expect(differentOperationAppliedTotal === 25, 'concurrent different operations apply the surplus only once');
+  expect(differentOperationResolutions.filter(result => errorOf(result).status === 'FAILED_PRECONDITION').length === 1, 'concurrent different operations reject the second debt-free application');
+  const differentOperationSettlement = (await db.doc(`settlements/${differentOperationSettlementId}`).get()).data() || {};
+  const differentOperationWallet = (await db.doc(`courier_wallets/${courier.localId}`).get()).data() || {};
+  expect(Number(differentOperationSettlement.overpayment_applied) === 25 && Number(differentOperationSettlement.overpayment_remaining) === 15 && Number(differentOperationWallet.debt) === 0, 'different-operation race preserves the remaining surplus and clears debt exactly once');
+  const differentOperationLedger = await db.collection('financial_ledger').where('settlement_id', '==', differentOperationSettlementId).get();
+  expect(differentOperationLedger.size === 2 && differentOperationLedger.docs.filter(doc => doc.data()?.direction === 'debit' && Number(doc.data()?.amount) > 0).length === 1, 'different-operation race writes one balanced ledger pair with one positive debit entry');
+
+  const differentAmountSettlementId = key('overpayment-different-amount-settlement');
+  const differentAmountOperationId = key('overpayment-different-amount-op');
+  await db.doc(`settlements/${differentAmountSettlementId}`).set({status: 'approved', owner_type: 'courier', owner_id: courier.localId, shift_id: 'integration-shift-different-amount', overpayment_amount: 40, overpayment_applied: 0, overpayment_remaining: 40});
+  await db.doc(`courier_wallets/${courier.localId}`).set({debt: 25}, {merge: true});
+  const differentAmountResolutions = await Promise.all([
+    call('resolveCourierOverpayment', adminToken, {settlement_id: differentAmountSettlementId, operation_id: differentAmountOperationId, amount: 10}),
+    call('resolveCourierOverpayment', adminToken, {settlement_id: differentAmountSettlementId, operation_id: differentAmountOperationId, amount: 40}),
+  ]);
+  expect(differentAmountResolutions.filter(result => result.response.ok).length === 1 && differentAmountResolutions.filter(result => errorOf(result).status === 'FAILED_PRECONDITION').length === 1, 'same operation with different amounts rejects the conflicting replay');
+  const differentAmountApplied = differentAmountResolutions.find(result => result.response.ok)?.body.result?.applied;
+  expect(Number.isFinite(Number(differentAmountApplied)) && Number(differentAmountApplied) > 0, 'same operation with different amounts keeps the first committed amount');
+  const differentAmountSettlement = (await db.doc(`settlements/${differentAmountSettlementId}`).get()).data() || {};
+  expect(Number(differentAmountSettlement.overpayment_applied) === Number(differentAmountApplied), 'same operation with different amounts applies only once');
+  const differentAmountLedger = await db.collection('financial_ledger').where('settlement_id', '==', differentAmountSettlementId).get();
+  expect(differentAmountLedger.size === 2, 'same-operation amount race writes one balanced ledger pair');
+
   console.log(JSON.stringify({status: 'passed', project_id: PROJECT_ID, tool: 'direct callable HTTP with Auth Emulator ID tokens', cases_passed: counters.passed, duration_ms: Date.now() - started, duration_seconds: Number(((Date.now() - started) / 1000).toFixed(2)), checks: counters.cases}, null, 2));
 }
 run().catch((error) => {
