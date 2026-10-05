@@ -29,10 +29,11 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: functions/package-lock.json
-      - name: Install Functions dependencies
-        working-directory: functions
-        run: npm ci
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      - name: Install root and Functions dependencies
+        run: npm ci && npm ci --prefix functions
       - name: Lint Functions
         working-directory: functions
         run: npm run lint
