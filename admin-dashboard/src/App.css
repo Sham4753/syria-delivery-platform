@@ -90,6 +90,8 @@ button { cursor: pointer; }
 .icon-button { width: 34px; height: 34px; border: 0; border-radius: 9px; color: #637384; background: #eef3f4; font-size: 20px; }
 .modal-actions { display: flex; justify-content: flex-start; gap: 9px; margin-top: 7px; }
 .check-field { display: flex; align-items: center; gap: 8px; color: #526474; font-size: 13px; }
+.settlement-action { display: grid; gap: 8px; min-width: 190px; }
+.warning-message { margin-top: 7px; border-radius: 7px; padding: 5px 8px; color: #856318; background: #fff4d6; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .empty-state { padding: 48px 20px; color: var(--muted-2); text-align: center; font-size: 13px; }
 .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
 .badge.green { color: #16735a; background: #e1f5ec; }

@@ -51,10 +51,20 @@ export function SettingsPage() { const [config, setConfig] = useState({ app_name
 export function SettlementsPage() {
   const [items, setItems] = useState([])
   const [busy, setBusy] = useState('')
+  const [writeOff, setWriteOff] = useState({})
   const { toast, notify } = useToast()
   useEffect(() => onSnapshot(collection(db, 'settlements'), snapshot => setItems(snapshot.docs.map(item => ({ id: item.id, ...item.data() })).sort((a, b) => (b.created_at?.seconds || 0) - (a.created_at?.seconds || 0))), () => notify('تعذر تحميل التسويات', 'error')), [notify])
-  const approve = async id => { setBusy(id); try { await httpsCallable(functions, 'approveSettlement')({ settlement_id: id }); notify('تم اعتماد التسوية وكتابة القيد المالي') } catch (error) { notify(error.message || 'تعذر اعتماد التسوية', 'error') } finally { setBusy('') } }
-  return <><section className="page-heading"><div><p className="eyebrow">FINANCE / SETTLEMENTS</p><h1>الورديات والتسويات</h1><p>مراجعة فروقات الصندوق واعتمادها قبل تسجيل القيد المالي.</p></div></section><section className="data-card"><table><thead><tr><th>المالك</th><th>الوردية</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.owner_type === 'vendor' ? 'تاجر' : 'مندوب'} / {item.owner_id}</td><td>{item.shift_id}</td><td>{item.expected_cash || 0} ل.س</td><td>{item.counted_cash || 0} ل.س</td><td className={Number(item.variance || 0) < 0 ? 'negative' : ''}>{item.variance || 0} ل.س</td><td><span className={`badge ${item.status === 'approved' ? 'green' : 'blue'}`}>{item.status}</span></td><td>{item.status === 'pending_approval' ? <Button busy={busy === item.id} onClick={() => approve(item.id)}>اعتماد</Button> : 'تم الاعتماد'}</td></tr>)}</tbody></table>{!items.length && <EmptyState>لا توجد تسويات بعد.</EmptyState>}</section><Toast toast={toast} /></>
+  const approve = async item => {
+    const shortage = Math.max(0, -(Number(item.variance) || 0))
+    const shouldWriteOff = item.owner_type === 'courier' && shortage > 0 && writeOff[item.id] === true
+    if (shouldWriteOff && !window.confirm(`سيتم شطب ${shortage} ل.س من دين المندوب. هل تريد المتابعة؟`)) return
+    setBusy(item.id)
+    try {
+      await httpsCallable(functions, 'approveSettlement')({ settlement_id: item.id, writeOffShortage: shouldWriteOff })
+      notify(shouldWriteOff ? `تم اعتماد التسوية وشطب ${shortage} ل.س من الدين` : 'تم اعتماد التسوية وكتابة القيد المالي')
+    } catch (error) { notify(error.message || 'تعذر اعتماد التسوية', 'error') } finally { setBusy('') }
+  }
+  return <><section className="page-heading"><div><p className="eyebrow">FINANCE / SETTLEMENTS</p><h1>الورديات والتسويات</h1><p>مراجعة فروقات الصندوق واعتمادها قبل تسجيل القيد المالي.</p></div></section><section className="data-card"><table><thead><tr><th>المالك</th><th>الوردية</th><th>المتوقع</th><th>المعدود</th><th>الفرق</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>{items.map(item => { const shortage = Math.max(0, -(Number(item.variance) || 0)); const courierShortage = item.owner_type === 'courier' && shortage > 0; return <tr key={item.id}><td>{item.owner_type === 'vendor' ? 'تاجر' : 'مندوب'} / {item.owner_id}</td><td>{item.shift_id}</td><td>{item.expected_cash || 0} ل.س</td><td>{item.counted_cash || 0} ل.س</td><td className={Number(item.variance || 0) < 0 ? 'negative' : ''}>{item.variance || 0} ل.س</td><td><span className={`badge ${item.status === 'approved' ? 'green' : 'blue'}`}>{item.status}</span>{item.review_needed && <div className="warning-message">مراجعة مطلوبة: فائض مسجل</div>}</td><td>{item.status === 'pending_approval' ? <div className="settlement-action">{courierShortage && <label className="check-field"><input type="checkbox" checked={writeOff[item.id] === true} onChange={e => setWriteOff(current => ({ ...current, [item.id]: e.target.checked }))} /> شطب العجز من دين المندوب ({shortage} ل.س)</label>}<Button busy={busy === item.id} onClick={() => approve(item)}>اعتماد</Button></div> : 'تم الاعتماد'}</td></tr> })}</tbody></table>{!items.length && <EmptyState>لا توجد تسويات بعد.</EmptyState>}</section><Toast toast={toast} /></>
 }
 
 
