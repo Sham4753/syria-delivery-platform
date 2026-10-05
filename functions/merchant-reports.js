@@ -54,24 +54,26 @@ function aggregateOrders(docs) {
       top.set(name, current);
     }
   }
-  Object.keys(report).forEach((key) => { report[key] = key === 'orders_count' ? report[key] : money(report[key]); });
+  Object.keys(report).forEach((key) => {
+    report[key] = key === 'orders_count' ? report[key] : money(report[key]);
+  });
   report.top_products = [...top.values()]
-    .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
-    .slice(0, 10)
-    .map((item) => ({...item, quantity: money(item.quantity), revenue: money(item.revenue)}));
+      .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+      .slice(0, 10)
+      .map((item) => ({...item, quantity: money(item.quantity), revenue: money(item.revenue)}));
   return report;
 }
 
 async function aggregateMerchantReports({db, vendorId, date}) {
   const {start, end} = dayBounds(date);
   const orderSnap = await db.collection('orders')
-    .where('vendor_id', '==', vendorId)
-    .where('status', '==', 'delivered')
-    .where('delivered_at', '>=', start)
-    .where('delivered_at', '<=', end)
-    .orderBy('delivered_at')
-    .limit(1000)
-    .get();
+      .where('vendor_id', '==', vendorId)
+      .where('status', '==', 'delivered')
+      .where('delivered_at', '>=', start)
+      .where('delivered_at', '<=', end)
+      .orderBy('delivered_at')
+      .limit(1000)
+      .get();
   const report = aggregateOrders(orderSnap.docs);
 
   const [shiftSnap, settlementSnap] = await Promise.all([
@@ -80,9 +82,9 @@ async function aggregateMerchantReports({db, vendorId, date}) {
   ]);
   const shifts = shiftSnap.docs.map((doc) => ({id: doc.id, ...doc.data()}));
   const settlements = settlementSnap.docs
-    .map((doc) => ({id: doc.id, ...doc.data()}))
-    .filter((item) => timestampToMillis(item.created_at) >= start.getTime() && timestampToMillis(item.created_at) <= end.getTime())
-    .sort((a, b) => timestampToMillis(b.created_at) - timestampToMillis(a.created_at));
+      .map((doc) => ({id: doc.id, ...doc.data()}))
+      .filter((item) => timestampToMillis(item.created_at) >= start.getTime() && timestampToMillis(item.created_at) <= end.getTime())
+      .sort((a, b) => timestampToMillis(b.created_at) - timestampToMillis(a.created_at));
   const activeShift = shifts.find((item) => item.status === 'open') || null;
   const dayShifts = shifts.filter((item) => {
     const opened = timestampToMillis(item.opened_at);

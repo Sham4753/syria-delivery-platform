@@ -18,5 +18,8 @@ assert.strictEqual(
 );
 assert.strictEqual(courierDebtForDeliveredOrder({subtotal: 1000}), 0, 'missing cash_due must be safe');
 assert.strictEqual(courierDebtForDeliveredOrder({cash_due: -5}), 0, 'negative cash_due must be clamped');
+assert.strictEqual(courierDebtForDeliveredOrder({cash_due: 500, status: 'delivered'}), 500, 'full delivery records collected COD');
+assert.strictEqual(courierDebtForDeliveredOrder({cash_due: 0, status: 'delivered'}), 0, 'prepaid or partial cash collection cannot create debt');
+assert.strictEqual(courierDebtForDeliveredOrder({cash_due: 250, status: 'cancelled'}), 250, 'settlement uses the server-calculated cash due');
 
 console.log('Courier settlement tests passed.');

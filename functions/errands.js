@@ -1,5 +1,6 @@
 'use strict';
 const {normalizePoint, pickZone, haversineKm, computeErrandFee, round2} = require('./geo');
+const {changeToWalletLedgerEntries} = require('./financial-ledger');
 
 const CHANGE_REQUEST_WINDOW_MS = 48 * 60 * 60 * 1000;
 const QUOTE_CACHE_TTL_MS = 30 * 1000;
@@ -187,7 +188,8 @@ function buildErrandFunctions({db, onCall, HttpsError, FieldValue, createHash, r
       tx.create(customerRef.collection('wallet_ledger').doc(`change_${orderId}`), {label: `فكة الطلب ${orderId.slice(0, 6)}`, amount, unit: 'ل.س', direction: 'credit', order_id: orderId, created_at: FieldValue.serverTimestamp()});
       tx.set(walletRef, {debt: FieldValue.increment(amount), updated_at: FieldValue.serverTimestamp()}, {merge: true});
       tx.create(walletRef.collection('ledger').doc(`change_${orderId}`), {type: 'change_to_wallet', order_id: orderId, debt: amount, earnings: 0, created_at: FieldValue.serverTimestamp()});
-      tx.create(db.collection('financial_ledger').doc(), {type: 'change_to_wallet', direction: 'credit', amount, order_id: orderId, customer_id: request.customer_id, courier_id: request.courier_id, actor_id: adminId, created_at: FieldValue.serverTimestamp()});
+      const entries = changeToWalletLedgerEntries({orderId, amount, actorId: adminId, customerId: request.customer_id, courierId: request.courier_id});
+      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, created_at: FieldValue.serverTimestamp()});
       tx.update(requestRef, {status: 'approved', ...review});
       return {order_id: orderId, status: 'approved', amount};
     });

@@ -28,7 +28,7 @@ const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
-const {manualTransferLedgerEntries, assertPaymentTransition} = require('./financial-ledger');
+const {manualTransferLedgerEntries, assertPaymentTransition, settlementLedgerEntries, commissionLedgerEntries} = require('./financial-ledger');
 const {CHANNELS, normalizeReference, referenceHash, referenceReservationId, normalizeChannel, buildManualTransferSettings, assertAmountWithinChannel, assertManualTransferChannel} = require('./manual-transfer');
 const {normalizeProviderConfig, verifySignature, providerEvent, providerStatusForEvent, providerLedgerEntries} = require('./payment-provider');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
@@ -260,15 +260,15 @@ exports.getVendorRatings = onCall(async (data, context) => {
     db.collection('ratings').where('vendor_id', '==', vendorId).limit(50).get(),
   ]);
   const ratings = ratingsSnap.docs.map((doc) => ({id: doc.id, ...doc.data()}))
-    .sort((a, b) => (b.updated_at?.toMillis?.() || 0) - (a.updated_at?.toMillis?.() || 0))
-    .map((item) => ({
-      id: item.id,
-      order_id: String(item.order_id || item.id),
-      customer_id: String(item.customer_id || ''),
-      courier_id: item.courier_id || null,
-      vendor_rating: Number(item.vendor_rating || 0),
-      comment: item.comment || null,
-    }));
+      .sort((a, b) => (b.updated_at?.toMillis?.() || 0) - (a.updated_at?.toMillis?.() || 0))
+      .map((item) => ({
+        id: item.id,
+        order_id: String(item.order_id || item.id),
+        customer_id: String(item.customer_id || ''),
+        courier_id: item.courier_id || null,
+        vendor_rating: Number(item.vendor_rating || 0),
+        comment: item.comment || null,
+      }));
   const vendor = vendorSnap.data() || {};
   return {average: Number(vendor.rating_average || 0), count: Number(vendor.rating_count || 0), ratings};
 });
@@ -318,7 +318,11 @@ function validateConfigValue(key, value, rule) {
     const url = validateBoundedString(value, rule.max, key);
     if (!url) return url;
     let parsed;
-    try { parsed = new URL(url); } catch (_) { throw new HttpsError('invalid-argument', 'رابط التحديث غير صالح؛ استخدم https:// أو market://'); }
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      throw new HttpsError('invalid-argument', 'رابط التحديث غير صالح؛ استخدم https:// أو market://');
+    }
     if (!['https:', 'market:'].includes(parsed.protocol)) throw new HttpsError('invalid-argument', 'رابط التحديث يجب أن يبدأ بـ https:// أو market://');
     if (parsed.protocol === 'https:' && !parsed.hostname) throw new HttpsError('invalid-argument', 'رابط التحديث https غير صالح');
     return url;
@@ -353,9 +357,11 @@ function validateConfigValue(key, value, rule) {
   if (rule.type === 'boolean_map') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpsError('invalid-argument', `قيمة ${key} يجب أن تكون خريطة تطبيقات`);
     const clean = {};
-    for (const app of ['customer', 'merchant', 'courier']) if (value[app] !== undefined) {
-      if (typeof value[app] !== 'boolean') throw new HttpsError('invalid-argument', `قيمة صيانة ${app} يجب أن تكون true أو false`);
-      clean[app] = value[app];
+    for (const app of ['customer', 'merchant', 'courier']) {
+      if (value[app] !== undefined) {
+        if (typeof value[app] !== 'boolean') throw new HttpsError('invalid-argument', `قيمة صيانة ${app} يجب أن تكون true أو false`);
+        clean[app] = value[app];
+      }
     }
     if (Object.keys(value).some((app) => !['customer', 'merchant', 'courier'].includes(app))) throw new HttpsError('invalid-argument', `مفاتيح ${key} غير صالحة`);
     return clean;
@@ -410,7 +416,9 @@ function validateConfigValue(key, value, rule) {
 function compareConfigVersions(left, right) {
   const parse = (value) => String(value).split('+')[0].split('.').map(Number);
   const a = parse(left); const b = parse(right);
-  for (let i = 0; i < 3; i++) { const ai = a[i] || 0; const bi = b[i] || 0; if (ai !== bi) return ai < bi ? -1 : 1; }
+  for (let i = 0; i < 3; i++) {
+    const ai = a[i] || 0; const bi = b[i] || 0; if (ai !== bi) return ai < bi ? -1 : 1;
+  }
   return 0;
 }
 function validateVersionRelationships(config) {
@@ -639,17 +647,23 @@ exports.approveSettlement = onCall(async (data, context) => {
   if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
   await requireRole(context.auth.uid, ['super_admin']);
   const settlementId = String(data?.settlement_id || '').trim(); if (!settlementId) throw new HttpsError('invalid-argument', 'رقم التسوية مطلوب');
-  const settlementRef = db.doc(`settlements/${settlementId}`); const ledgerRef = db.collection('financial_ledger').doc();
+  const settlementRef = db.doc(`settlements/${settlementId}`);
   await db.runTransaction(async (tx) => {
     const settlement = await tx.get(settlementRef); if (!settlement.exists) throw new HttpsError('not-found', 'التسوية غير موجودة');
     if (settlement.data()?.status !== 'pending_approval') throw new HttpsError('failed-precondition', 'التسوية ليست بانتظار الاعتماد');
     tx.update(settlementRef, {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
     const settled = settlement.data() || {};
-    tx.create(ledgerRef, {type: 'shift_settlement', direction: 'variance', amount: money(Number(settled.variance || 0)), settlement_id: settlementId, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, actor_id: context.auth.uid, created_at: FieldValue.serverTimestamp()});
     if (settled.owner_type === 'courier' && settled.owner_id) {
       const walletRef = db.doc(`courier_wallets/${settled.owner_id}`);
       const remitted = Math.max(0, Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0));
-      tx.set(walletRef, {debt: FieldValue.increment(-remitted), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+      const walletSnap = await tx.get(walletRef);
+      const currentDebt = Math.max(0, Number(walletSnap.data()?.debt || 0));
+      tx.set(walletRef, {debt: Math.max(0, currentDebt - remitted), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+      const entries = settlementLedgerEntries({settlementId, amount: Math.min(remitted, currentDebt), variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id});
+      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
+    } else {
+      const entries = settlementLedgerEntries({settlementId, amount: 0, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id});
+      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
     }
   });
   return {settlement_id: settlementId, status: 'approved'};
@@ -657,12 +671,11 @@ exports.approveSettlement = onCall(async (data, context) => {
 
 
 function validateBankTransferReference(value) {
-  try { return normalizeReference(value); } catch (error) { throw new HttpsError('invalid-argument', error.message); }
-}
-
-function manualTransferChannelSettings(config, channel) {
-  const settings = buildManualTransferSettings(config || {}).manual_transfer.channels;
-  return settings[channel] || null;
+  try {
+    return normalizeReference(value);
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
 }
 
 function assertManualTransferOrderAllowed(config, channel, amount) {
@@ -684,7 +697,11 @@ exports.createManualTransferIntent = onCall(async (data, context) => {
   await requireRole(context.auth.uid, ['customer']);
   const orderId = String(data?.order_id || '').trim();
   let requestedChannel;
-  try { requestedChannel = normalizeChannel(data?.channel || 'bank_transfer'); } catch (error) { throw new HttpsError('invalid-argument', error.message); }
+  try {
+    requestedChannel = normalizeChannel(data?.channel || 'bank_transfer');
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
   if (!orderId) throw new HttpsError('invalid-argument', 'رقم الطلب مطلوب');
   const orderRef = db.doc(`orders/${orderId}`);
   const publicConfigRef = db.doc('public_payment_config/main');
@@ -707,7 +724,11 @@ exports.createManualTransferIntent = onCall(async (data, context) => {
       return;
     }
     let amount;
-    try { amount = assertAmountWithinChannel(Number(order.total || 0), channelSettings); } catch (error) { throw new HttpsError('failed-precondition', error.message); }
+    try {
+      amount = assertAmountWithinChannel(Number(order.total || 0), channelSettings);
+    } catch (error) {
+      throw new HttpsError('failed-precondition', error.message);
+    }
     tx.create(paymentRef, {order_id: orderId, customer_id: context.auth.uid, method: 'manual_transfer', channel, provider_id: `manual_${channel}`, provider_reference: paymentRef.id, amount, currency: String(configSnap.data()?.bank_transfer?.currency || 'SYP'), status: 'awaiting_customer_action', policy: transferPolicyValues(policy), created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: 1, reference_attempts: 0});
     tx.update(orderRef, {payment_status: 'pending', payment_intent_id: paymentRef.id, updated_at: FieldValue.serverTimestamp()});
     result = {payment_id: paymentRef.id, status: 'awaiting_customer_action', reused: false};
@@ -988,6 +1009,16 @@ exports.transitionOrderStatus = onCall(async (data, context) => {
         tx.update(couponRef, {used_count: FieldValue.increment(-1)});
         tx.delete(couponRef.collection('redemptions').doc(String(before.customer_id)));
       }
+      if (before.payment_intent_id && before.payment_status === 'paid') {
+        const paymentRef = db.doc(`payment_intents/${before.payment_intent_id}`);
+        const refundRef = db.doc(`refund_requests/${before.payment_intent_id}`);
+        const paymentSnap = await tx.get(paymentRef);
+        if (paymentSnap.exists && paymentSnap.data()?.status === 'paid') {
+          tx.update(paymentRef, {status: 'refund_pending', refund_reason: reason || 'إلغاء الطلب', refund_requested_by: uid, refund_requested_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), version: FieldValue.increment(1)});
+          tx.set(refundRef, {payment_id: before.payment_intent_id, order_id: orderId, amount: paymentSnap.data()?.amount, currency: paymentSnap.data()?.currency || 'SYP', status: 'requested', destination: paymentSnap.data()?.method === 'provider' ? 'external_provider' : 'manual_review', reason: reason || 'إلغاء الطلب', requested_by: uid, created_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()}, {merge: true});
+          changes.payment_refund_status = 'pending_provider_or_admin';
+        }
+      }
       changes.refund_processed = true;
     }
     tx.update(orderRef, changes);
@@ -1226,9 +1257,15 @@ exports.createOrder = onCall(async (data, context) => {
   const requestedPaymentMethod = String(payload.payment_method || 'cash_on_delivery');
   let paymentMethod = requestedPaymentMethod;
   let paymentChannel = null;
-  if (requestedPaymentMethod === 'bank_transfer') { paymentMethod = 'manual_transfer'; paymentChannel = 'bank_transfer'; }
+  if (requestedPaymentMethod === 'bank_transfer') {
+    paymentMethod = 'manual_transfer'; paymentChannel = 'bank_transfer';
+  }
   if (requestedPaymentMethod === 'manual_transfer') {
-    try { paymentChannel = normalizeChannel(payload.payment_channel || 'bank_transfer'); } catch (error) { throw new HttpsError('invalid-argument', error.message); }
+    try {
+      paymentChannel = normalizeChannel(payload.payment_channel || 'bank_transfer');
+    } catch (error) {
+      throw new HttpsError('invalid-argument', error.message);
+    }
   }
   const requestedWallet = Number(payload.wallet_amount || 0);
   const requestedPoints = Number(payload.loyalty_points || 0);
@@ -1453,10 +1490,12 @@ exports.calculateOrderCommission = onDocumentCreated('orders/{orderId}', async (
   const vendor = await db.doc(`vendors/${order.vendor_id}`).get(); const rate = Number(vendor.data()?.commission_rate || 0); const commissionBase = Math.max(0, Number(order.subtotal || 0) - Number(order.discount_amount || 0)); const commission = money(commissionBase * rate / 100);
   const etaMinutes = Math.max(10, Number(order.prep_minutes || 20) + 15);
   await snap.ref.update({commission, discount_amount: discount, commission_base: commissionBase, total: Number(order.total || Math.max(0, Number(order.subtotal || 0) + Number(order.delivery_fee || 0) - discount)), eta_minutes: etaMinutes, synced: true, updated_at: FieldValue.serverTimestamp()});
-  const ledgerRef = db.doc(`financial_ledger/commission_${event.params.orderId}`);
-  await ledgerRef.create({type: 'order_commission', direction: 'credit', amount: commission, commission_base: commissionBase, rate, order_id: event.params.orderId, vendor_id: order.vendor_id, created_at: FieldValue.serverTimestamp()}).catch((error) => {
-    if (error.code !== 6 && error.code !== 'already-exists') throw error;
-  });
+  const entries = commissionLedgerEntries({orderId: event.params.orderId, vendorId: order.vendor_id, amount: commission, rate});
+  for (const entry of entries) {
+    await db.doc(`financial_ledger/${entry.entry_id}`).create({...entry, commission_base: commissionBase, created_at: FieldValue.serverTimestamp()}).catch((error) => {
+      if (error.code !== 6 && error.code !== 'already-exists') throw error;
+    });
+  }
 });
 
 exports.dispatchPendingOrder = onDocumentWritten('orders/{orderId}', async (event) => {

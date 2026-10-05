@@ -12,15 +12,15 @@ function normalizedPhone(value) {
 async function sendTwilioMessage({to, body, channel}) {
   const sid = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
   const token = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
-  const from = channel === 'whatsapp'
-    ? String(process.env.TWILIO_WHATSAPP_FROM || '').trim()
-    : String(process.env.TWILIO_SMS_FROM || '').trim();
+  const from = channel === 'whatsapp' ?
+    String(process.env.TWILIO_WHATSAPP_FROM || '').trim() :
+    String(process.env.TWILIO_SMS_FROM || '').trim();
   if (!sid || !token || !from) throw new Error(`Twilio ${channel} is not configured`);
   const recipient = channel === 'whatsapp' ? `whatsapp:${to}` : to;
   const response = await fetch(`${ALERT_ENDPOINT}/${sid}/Messages.json`, {
     method: 'POST',
     headers: {
-      Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
+      'Authorization': `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({To: recipient, From: from, Body: body}),
