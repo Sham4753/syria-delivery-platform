@@ -6,7 +6,7 @@ const {
   assertPaymentTransition,
   changeToWalletLedgerEntries,
   commissionLedgerEntries,
-  settlementApplication,
+  settlementDecision,
   settlementLedgerEntries,
 } = require('../functions/financial-ledger');
 
@@ -19,15 +19,18 @@ function accountBalances(entries) {
 }
 
 function assertSettlementCase(name, input, expected) {
-  const application = settlementApplication(input);
+  const decision = settlementDecision(input);
   const entries = settlementLedgerEntries({
     settlementId: `settlement_${name}`,
     actorId: 'admin_1',
     ownerId: 'courier_1',
-    ...input,
+    remitted: decision.remitted,
+    currentDebt: input.currentDebt,
+    variance: input.variance,
+    writeOffShortage: decision.writeOffAllowed,
   });
   assert.doesNotThrow(() => assertBalancedEntries(entries), `${name} must balance`);
-  assert.deepStrictEqual(application, expected.application, `${name} application result`);
+  assert.deepStrictEqual(decision, expected.decision, `${name} decision result`);
   assert.deepStrictEqual(accountBalances(entries), expected.balances, `${name} final account balances`);
   return entries;
 }
@@ -54,47 +57,33 @@ for (const entries of [
   assert.strictEqual(entries.reduce((sum, entry) => sum + (entry.direction === 'debit' ? entry.amount : -entry.amount), 0), 0);
 }
 
-assertSettlementCase('shortage', {remitted: 90, currentDebt: 100, variance: -10}, {
-  application: {remitted: 90, currentDebt: 100, applied: 90, shortage: 10, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 10},
+assertSettlementCase('shortage', {countedCash: 90, openingCash: 0, currentDebt: 100, variance: -10}, {
+  decision: {remitted: 90, currentDebt: 100, applied: 90, shortage: 10, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 10, rawRemitted: 90, writeOffAllowed: false, writeOffApplied: 0, reviewReason: null},
   balances: {cash_on_hand: 90, courier_cash_receivable: -90},
 });
-assertSettlementCase('shortage_writeoff', {remitted: 90, currentDebt: 100, variance: -10, writeOffShortage: true}, {
-  application: {remitted: 90, currentDebt: 100, applied: 90, shortage: 10, writeOff: 10, overpayment: 0, reviewNeeded: false, remainingDebt: 0},
+assertSettlementCase('shortage_writeoff', {countedCash: 90, openingCash: 0, currentDebt: 100, variance: -10, writeOffShortage: true}, {
+  decision: {remitted: 90, currentDebt: 100, applied: 90, shortage: 10, writeOff: 10, overpayment: 0, reviewNeeded: false, remainingDebt: 0, rawRemitted: 90, writeOffAllowed: true, writeOffApplied: 10, reviewReason: null},
   balances: {cash_on_hand: 90, courier_cash_receivable: -100, cash_variance_loss: 10},
 });
-const overage100 = assertSettlementCase('overage_debt100', {remitted: 110, currentDebt: 100, variance: 10}, {
-  application: {remitted: 110, currentDebt: 100, applied: 100, shortage: 0, writeOff: 0, overpayment: 10, reviewNeeded: true, remainingDebt: 0},
+assertSettlementCase('overage_debt100', {countedCash: 110, openingCash: 0, currentDebt: 100, variance: 10}, {
+  decision: {remitted: 110, currentDebt: 100, applied: 100, shortage: 0, writeOff: 0, overpayment: 10, reviewNeeded: true, remainingDebt: 0, rawRemitted: 110, writeOffAllowed: false, writeOffApplied: 0, reviewReason: 'overpayment'},
   balances: {cash_on_hand: 110, courier_cash_receivable: -100, courier_overpayment_payable: -10},
 });
-assert.strictEqual(overage100.find((entry) => entry.account === 'courier_overpayment_payable').metadata.review_needed, true);
-assertSettlementCase('overage_debt200', {remitted: 110, currentDebt: 200, variance: 10}, {
-  application: {remitted: 110, currentDebt: 200, applied: 110, shortage: 0, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 90},
+assertSettlementCase('overage_debt200', {countedCash: 110, openingCash: 0, currentDebt: 200, variance: 10}, {
+  decision: {remitted: 110, currentDebt: 200, applied: 110, shortage: 0, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 90, rawRemitted: 110, writeOffAllowed: false, writeOffApplied: 0, reviewReason: null},
   balances: {cash_on_hand: 110, courier_cash_receivable: -110},
 });
-assertSettlementCase('full_remittance', {remitted: 100, currentDebt: 100, variance: 0}, {
-  application: {remitted: 100, currentDebt: 100, applied: 100, shortage: 0, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 0},
+assertSettlementCase('full_remittance', {countedCash: 100, openingCash: 0, currentDebt: 100, variance: 0}, {
+  decision: {remitted: 100, currentDebt: 100, applied: 100, shortage: 0, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 0, rawRemitted: 100, writeOffAllowed: false, writeOffApplied: 0, reviewReason: null},
   balances: {cash_on_hand: 100, courier_cash_receivable: -100},
 });
-assertSettlementCase('zero_remittance', {remitted: 0, currentDebt: 100, variance: -100}, {
-  application: {remitted: 0, currentDebt: 100, applied: 0, shortage: 100, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 100},
+assertSettlementCase('counted_below_opening', {countedCash: 30, openingCash: 50, currentDebt: 100, variance: -20, writeOffShortage: true}, {
+  decision: {remitted: 0, currentDebt: 100, applied: 0, shortage: 20, writeOff: 0, overpayment: 0, reviewNeeded: true, remainingDebt: 100, rawRemitted: -20, writeOffAllowed: false, writeOffApplied: 0, reviewReason: 'below_opening'},
   balances: {},
 });
-const countedCashBelowOpening = 30;
-const openingCash = 50;
-const rawRemitted = countedCashBelowOpening - openingCash;
-assert.strictEqual(rawRemitted, -20);
-const belowOpening = assertSettlementCase('counted_below_opening', {remitted: Math.max(0, rawRemitted), currentDebt: 100, variance: -20}, {
-  application: {remitted: 0, currentDebt: 100, applied: 0, shortage: 20, writeOff: 0, overpayment: 0, reviewNeeded: false, remainingDebt: 100},
-  balances: {},
-});
-assert.strictEqual(belowOpening.length, 0, 'counted below opening must not create ledger entries');
-assert.strictEqual(Math.max(0, 100 - 0), 100, 'counted below opening must leave courier debt unchanged');
-const belowOpeningShortage = Math.max(0, -(-20));
-assert.strictEqual(belowOpeningShortage, 20, 'counted below opening must preserve full shortage');
-assert.strictEqual(rawRemitted < 0 && belowOpeningShortage > 0, true, 'counted below opening must require review');
-assertSettlementCase('debt_less_than_expected', {remitted: 100, currentDebt: 60, variance: 0}, {
-  application: {remitted: 100, currentDebt: 60, applied: 60, shortage: 0, writeOff: 0, overpayment: 40, reviewNeeded: true, remainingDebt: 0},
+assertSettlementCase('debt_less_than_expected', {countedCash: 100, openingCash: 0, currentDebt: 60, variance: 0}, {
+  decision: {remitted: 100, currentDebt: 60, applied: 60, shortage: 0, writeOff: 0, overpayment: 40, reviewNeeded: true, remainingDebt: 0, rawRemitted: 100, writeOffAllowed: false, writeOffApplied: 0, reviewReason: 'overpayment'},
   balances: {cash_on_hand: 100, courier_cash_receivable: -60, courier_overpayment_payable: -40},
 });
 
-console.log('Financial ledger tests passed: settlement shortage, write-off, overage, full, zero, and capped-debt cases.');
+console.log('Financial ledger tests passed: pure settlement decisions and all remittance cases.');

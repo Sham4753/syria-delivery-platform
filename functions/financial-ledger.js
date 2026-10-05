@@ -145,6 +145,26 @@ function settlementApplication({remitted, currentDebt, variance = 0, writeOffSho
   };
 }
 
+function settlementDecision({countedCash, openingCash, currentDebt, variance = 0, writeOffShortage = false}) {
+  const counted = Number(countedCash || 0);
+  const opening = Number(openingCash || 0);
+  const rawRemitted = counted - opening;
+  if (!Number.isFinite(rawRemitted)) throw new Error('Invalid counted or opening cash');
+  const remitted = Math.max(0, rawRemitted);
+  const shortage = Math.max(0, -Number(variance || 0));
+  const writeOffAllowed = writeOffShortage === true && rawRemitted >= 0;
+  const application = settlementApplication({remitted, currentDebt, variance, writeOffShortage: writeOffAllowed});
+  const reviewReason = application.reviewNeeded ? 'overpayment' : (rawRemitted < 0 && shortage > 0 ? 'below_opening' : null);
+  return {
+    ...application,
+    rawRemitted,
+    writeOffAllowed,
+    writeOffApplied: application.writeOff,
+    reviewNeeded: reviewReason !== null,
+    reviewReason,
+  };
+}
+
 function settlementLedgerEntries({settlementId, remitted, currentDebt, variance = 0, currency = 'SYP', actorId, ownerId, writeOffShortage = false}) {
   const application = settlementApplication({remitted, currentDebt, variance, writeOffShortage});
   const entries = [];
@@ -209,5 +229,6 @@ module.exports = {
   changeToWalletLedgerEntries,
   commissionLedgerEntries,
   settlementApplication,
+  settlementDecision,
   settlementLedgerEntries,
 };
