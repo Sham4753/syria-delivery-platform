@@ -126,13 +126,32 @@ function commissionLedgerEntries({orderId, vendorId, amount, currency = 'SYP', r
   return entries;
 }
 
-function settlementLedgerEntries({settlementId, amount, variance = 0, currency = 'SYP', actorId, ownerId}) {
+function settlementApplication({remitted, currentDebt, variance = 0, writeOffShortage = false}) {
+  const actualRemitted = money(remitted);
+  const debt = money(currentDebt);
+  const applied = Math.min(actualRemitted, debt);
+  const shortage = Math.max(0, -Number(variance || 0));
+  const writeOff = writeOffShortage ? Math.min(shortage, Math.max(0, debt - applied)) : 0;
+  const overpayment = Math.max(0, actualRemitted - applied);
+  return {
+    remitted: actualRemitted,
+    currentDebt: debt,
+    applied: money(applied),
+    shortage: money(shortage),
+    writeOff: money(writeOff),
+    overpayment: money(overpayment),
+    reviewNeeded: overpayment > 0,
+    remainingDebt: money(debt - applied - writeOff),
+  };
+}
+
+function settlementLedgerEntries({settlementId, remitted, currentDebt, variance = 0, currency = 'SYP', actorId, ownerId, writeOffShortage = false}) {
+  const application = settlementApplication({remitted, currentDebt, variance, writeOffShortage});
   const entries = [];
-  const remitted = money(amount);
-  if (remitted > 0) {
+  if (application.remitted > 0 && application.applied > 0) {
     entries.push(...buildBalancedPair({
       entryGroupId: `settlement_${settlementId}_remittance`,
-      amount: remitted,
+      amount: application.applied,
       currency,
       sourceType: 'shift_cash_remittance',
       sourceId: settlementId,
@@ -140,22 +159,35 @@ function settlementLedgerEntries({settlementId, amount, variance = 0, currency =
       settlementId,
       debitAccount: 'cash_on_hand',
       creditAccount: 'courier_cash_receivable',
-      metadata: {owner_id: ownerId, immutable: true},
+      metadata: {owner_id: ownerId, remitted: application.remitted, applied: application.applied, immutable: true},
     }));
   }
-  const difference = Math.round(Number(variance || 0) * 100) / 100;
-  if (difference !== 0) {
+  if (application.overpayment > 0) {
     entries.push(...buildBalancedPair({
-      entryGroupId: `settlement_${settlementId}_variance`,
-      amount: Math.abs(difference),
+      entryGroupId: `settlement_${settlementId}_overpayment`,
+      amount: application.overpayment,
       currency,
-      sourceType: difference > 0 ? 'shift_cash_overage' : 'shift_cash_shortage',
+      sourceType: 'shift_cash_overpayment',
       sourceId: settlementId,
       actorId,
       settlementId,
-      debitAccount: difference > 0 ? 'cash_on_hand' : 'cash_variance_loss',
-      creditAccount: difference > 0 ? 'cash_variance_gain' : 'cash_on_hand',
-      metadata: {owner_id: ownerId, variance: difference, immutable: true},
+      debitAccount: 'cash_on_hand',
+      creditAccount: 'courier_overpayment_payable',
+      metadata: {owner_id: ownerId, variance, review_needed: true, immutable: true},
+    }));
+  }
+  if (application.writeOff > 0) {
+    entries.push(...buildBalancedPair({
+      entryGroupId: `settlement_${settlementId}_shortage_writeoff`,
+      amount: application.writeOff,
+      currency,
+      sourceType: 'shift_cash_shortage_writeoff',
+      sourceId: settlementId,
+      actorId,
+      settlementId,
+      debitAccount: 'cash_variance_loss',
+      creditAccount: 'courier_cash_receivable',
+      metadata: {owner_id: ownerId, variance, write_off: true, immutable: true},
     }));
   }
   assertBalancedEntries(entries);
@@ -176,5 +208,6 @@ module.exports = {
   bankTransferLedgerEntries,
   changeToWalletLedgerEntries,
   commissionLedgerEntries,
+  settlementApplication,
   settlementLedgerEntries,
 };

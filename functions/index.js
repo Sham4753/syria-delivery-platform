@@ -28,7 +28,7 @@ const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
-const {manualTransferLedgerEntries, assertPaymentTransition, settlementLedgerEntries, commissionLedgerEntries} = require('./financial-ledger');
+const {manualTransferLedgerEntries, assertPaymentTransition, settlementApplication, settlementLedgerEntries, commissionLedgerEntries} = require('./financial-ledger');
 const {CHANNELS, normalizeReference, referenceHash, referenceReservationId, normalizeChannel, buildManualTransferSettings, assertAmountWithinChannel, assertManualTransferChannel} = require('./manual-transfer');
 const {normalizeProviderConfig, verifySignature, providerEvent, providerStatusForEvent, providerLedgerEntries} = require('./payment-provider');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
@@ -651,20 +651,22 @@ exports.approveSettlement = onCall(async (data, context) => {
   await db.runTransaction(async (tx) => {
     const settlement = await tx.get(settlementRef); if (!settlement.exists) throw new HttpsError('not-found', 'التسوية غير موجودة');
     if (settlement.data()?.status !== 'pending_approval') throw new HttpsError('failed-precondition', 'التسوية ليست بانتظار الاعتماد');
-    tx.update(settlementRef, {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp()});
     const settled = settlement.data() || {};
+    const writeOffShortage = data?.writeOffShortage === true;
+    const settlementUpdate = {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), review_needed: false};
     if (settled.owner_type === 'courier' && settled.owner_id) {
       const walletRef = db.doc(`courier_wallets/${settled.owner_id}`);
-      const remitted = Math.max(0, Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0));
+      const remitted = Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0);
+      if (!Number.isFinite(remitted) || remitted < 0) throw new HttpsError('failed-precondition', 'المبلغ المسلم أقل من الرصيد الافتتاحي');
       const walletSnap = await tx.get(walletRef);
       const currentDebt = Math.max(0, Number(walletSnap.data()?.debt || 0));
-      tx.set(walletRef, {debt: Math.max(0, currentDebt - remitted), updated_at: FieldValue.serverTimestamp()}, {merge: true});
-      const entries = settlementLedgerEntries({settlementId, amount: Math.min(remitted, currentDebt), variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id});
-      for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
-    } else {
-      const entries = settlementLedgerEntries({settlementId, amount: 0, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id});
+      const application = settlementApplication({remitted, currentDebt, variance: settled.variance, writeOffShortage});
+      settlementUpdate.review_needed = application.reviewNeeded;
+      tx.set(walletRef, {debt: application.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
+      const entries = settlementLedgerEntries({settlementId, remitted, currentDebt, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id, writeOffShortage});
       for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
     }
+    tx.update(settlementRef, settlementUpdate);
   });
   return {settlement_id: settlementId, status: 'approved'};
 });
