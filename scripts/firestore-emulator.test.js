@@ -60,6 +60,8 @@ async function seed() {
     await db.doc('users/customer_1/loyalty_ledger/entry_1').set({points: 2});
     await db.doc('courier_wallets/courier_1').set({debt: 0});
     await db.doc('courier_wallets/courier_1/ledger/entry_1').set({amount: 100});
+    await db.doc('courier_overpayment_resolutions/resolution_1').set({operation_id: 'operation_1', settlement_id: 'settlement_1', applied: 25});
+    await db.doc('financial_ledger/entry_1').set({entry_group_id: 'group_1', account: 'courier_overpayment_payable', direction: 'debit', amount: 25});
     await db.doc('coupons/TEST10').set({is_active: true, value: 10});
     await db.doc('chats/order_party/messages/message_1').set({sender_id: 'customer_1', text: 'مرحبا'});
     await db.doc('tracking/order_party').set({courier_id: 'courier_1', customer_id: 'customer_1'});
@@ -123,6 +125,12 @@ async function runRulesMatrix() {
   await deny('vendor reads courier wallet', () => vendor.doc('courier_wallets/courier_1').get());
   await allow('admin reads courier wallet ledger', () => adminDbClient.doc('courier_wallets/courier_1/ledger/entry_1').get());
   await deny('courier writes courier wallet ledger', () => courier.doc('courier_wallets/courier_1/ledger/new').set({amount: 1}));
+  await allow('admin reads courier overpayment resolution', () => adminDbClient.doc('courier_overpayment_resolutions/resolution_1').get());
+  await allow('admin reads financial ledger', () => adminDbClient.doc('financial_ledger/entry_1').get());
+  for (const [name, db] of [['guest', guest], ['customer', customer], ['vendor', vendor], ['courier', courier], ['admin', adminDbClient]]) {
+    await deny(`${name} writes courier overpayment resolution`, () => db.doc('courier_overpayment_resolutions/direct_write').set({operation_id: 'bypass'}));
+    await deny(`${name} writes financial ledger`, () => db.doc('financial_ledger/direct_write').set({direction: 'debit', amount: 1}));
+  }
 
   // Coupons: no client reads; admin write only.
   await deny('guest reads coupon', () => guest.doc('coupons/TEST10').get());
