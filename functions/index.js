@@ -682,12 +682,25 @@ exports.resolveCourierOverpayment = onCall(async (data, context) => {
   await requireRole(context.auth.uid, ['super_admin']);
   const settlementId = String(data?.settlement_id || '').trim();
   if (!settlementId) throw new HttpsError('invalid-argument', 'رقم التسوية مطلوب');
+  const operationId = String(data?.operation_id || data?.idempotency_key || '').trim();
+  if (!operationId || !/^[A-Za-z0-9_-]{8,128}$/.test(operationId)) throw new HttpsError('invalid-argument', 'مفتاح العملية مطلوب وصيغته غير صالحة');
   const requestedAmount = data?.amount === undefined ? undefined : Number(data.amount);
   if (requestedAmount !== undefined && (!Number.isFinite(requestedAmount) || requestedAmount <= 0)) throw new HttpsError('invalid-argument', 'مبلغ التسوية غير صالح');
   const settlementRef = db.doc(`settlements/${settlementId}`);
+  const resolutionRef = db.doc(`courier_overpayment_resolutions/${operationId}`);
   let applied = 0;
   let remainingPayable = 0;
+  let replayed = false;
   await db.runTransaction(async (tx) => {
+    const resolutionSnap = await tx.get(resolutionRef);
+    if (resolutionSnap.exists) {
+      const previous = resolutionSnap.data() || {};
+      if (previous.settlement_id !== settlementId || previous.actor_id !== context.auth.uid) throw new HttpsError('already-exists', 'مفتاح العملية مستخدم لعملية أخرى');
+      applied = Number(previous.applied || 0);
+      remainingPayable = Number(previous.remaining_payable || 0);
+      replayed = true;
+      return;
+    }
     const settlementSnap = await tx.get(settlementRef);
     if (!settlementSnap.exists) throw new HttpsError('not-found', 'التسوية غير موجودة');
     const settlement = settlementSnap.data() || {};
@@ -705,9 +718,10 @@ exports.resolveCourierOverpayment = onCall(async (data, context) => {
     const entries = courierOverpaymentLedgerEntries({resolutionId, amount: applied, actorId: context.auth.uid, ownerId: settlement.owner_id, settlementId});
     tx.set(walletRef, {debt: application.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
     tx.update(settlementRef, {overpayment_applied: appliedBefore + applied, overpayment_remaining: remainingPayable, updated_at: FieldValue.serverTimestamp()});
+    tx.create(resolutionRef, {operation_id: operationId, settlement_id: settlementId, actor_id: context.auth.uid, courier_id: settlement.owner_id, applied, remaining_payable: remainingPayable, action: 'apply_to_debt', created_at: FieldValue.serverTimestamp()});
     for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settlement.shift_id, owner_type: settlement.owner_type, owner_id: settlement.owner_id, created_at: FieldValue.serverTimestamp()});
   });
-  return {settlement_id: settlementId, applied, remaining_payable: remainingPayable, action: 'apply_to_debt'};
+  return {settlement_id: settlementId, applied, remaining_payable: remainingPayable, action: 'apply_to_debt', replayed};
 });
 
 
