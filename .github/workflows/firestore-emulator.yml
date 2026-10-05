@@ -10,13 +10,6 @@ on:
       - 'package-lock.json'
       - '.github/workflows/firestore-emulator.yml'
   pull_request:
-    paths:
-      - 'firestore.rules'
-      - 'firebase.json'
-      - 'scripts/firestore-emulator.test.js'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/firestore-emulator.yml'
   workflow_dispatch:
 
 permissions:

@@ -19,11 +19,6 @@ on:
       - 'courier_app/**'
       - '.github/workflows/build.yml'
   pull_request:
-    paths:
-      - 'customer_app/**'
-      - 'merchant_app/**'
-      - 'courier_app/**'
-      - '.github/workflows/build.yml'
 
 env:
   FLUTTER_VERSION: stable
