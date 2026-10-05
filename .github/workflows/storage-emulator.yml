@@ -10,13 +10,6 @@ on:
       - 'package-lock.json'
       - '.github/workflows/storage-emulator.yml'
   pull_request:
-    paths:
-      - 'storage.rules'
-      - 'firebase.json'
-      - 'scripts/storage-emulator.test.js'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/storage-emulator.yml'
   workflow_dispatch:
 
 permissions:
