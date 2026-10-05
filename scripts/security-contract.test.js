@@ -6,6 +6,7 @@ const functions = fs.readFileSync(path.join(root, 'functions', 'index.js'), 'utf
 const errands = fs.readFileSync(path.join(root, 'functions', 'errands.js'), 'utf8');
 const errandScreen = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'screens', 'errand_screen.dart'), 'utf8');
 const rules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
+const storageRules = fs.readFileSync(path.join(root, 'storage.rules'), 'utf8');
 const customer = fs.readFileSync(path.join(root, 'customer_app', 'lib', 'common.dart'), 'utf8');
 const courier = fs.readFileSync(path.join(root, 'courier_app', 'lib', 'common.dart'), 'utf8');
 const courierOrders = fs.readFileSync(path.join(root, 'courier_app', 'lib', 'screens', 'orders_screen.dart'), 'utf8');
@@ -65,6 +66,8 @@ assert(/match \/public_vendors\/{vendorId}/.test(rules), 'public vendor projecti
 assert(/match \/system_config\/{configId} \{ allow read: if admin\(\);/.test(rules) && /match \/public_config\/{configId} \{ allow read: if configId == 'main';/.test(rules), 'private config must be admin-only and public projection limited to main');
 assert(/allow read: if resource\.data\.is_available == true \|\| admin\(\) \|\| vendorOwner\(vendorId\)/.test(rules), 'available products must be browsable by guests');
 assert(/match \/wallet_topups\/{topupId} \{ allow read: if signedIn\(\) && resource\.data\.customer_id == request\.auth\.uid; allow create: if false;/.test(rules), 'wallet topups must be callable-only');
+assert(/resource\.data\.keys\(\)\.hasAny\(\['dispatch_candidates'\]\)/.test(rules) && /dispatch_candidates\.hasAny/.test(rules), 'courier order reads must require dispatch_candidates');
+assert(/match \/branding\/{allPaths=\*\*}/.test(storageRules) && /match \/banners\/{allPaths=\*\*}/.test(storageRules) && /match \/\{allPaths=\*\*\}/.test(storageRules), 'storage must restrict dashboard asset paths and deny unspecified paths');
 assert(/match \/ratings\/{ratingId}/.test(rules) && /allow create, update, delete: if false/.test(rules) && /exports\.submitRating/.test(functions), 'ratings must be written only through the validated server callable');
 assert(/collection\('public_vendors'\)/.test(customer), 'customer must read sanitized public vendor catalog');
 assert(!/defaultValue: true/.test(customer.match(/const useFirebaseEmulators[\s\S]{0,160}/)?.[0] || ''), 'production must not default to Firebase emulators');
@@ -84,4 +87,5 @@ assert(/ENFORCE_APPCHECK/.test(securityOps) && /assertAppCheck/.test(functions),
 assert(/consumeQuota/.test(functions) && /security_rate_limits/.test(rules), 'support operations must use server-side quotas');
 assert(/exports\.createSupportTicket/.test(functions) && /exports\.reviewSupportTicket/.test(functions) && /allow create, update, delete: if false/.test(rules), 'support tickets must be callable-only');
 assert(/exports\.recordOperationalIncident/.test(functions) && /operational_incidents/.test(rules), 'operational incidents must be admin-readable and server-written');
+assert(/refund_pending/.test(functions) && /pending_provider_or_admin/.test(functions) && /refund_requests/.test(functions), 'paid external refunds must remain visible as pending until provider/admin completion');
 console.log('Security contract tests passed.');

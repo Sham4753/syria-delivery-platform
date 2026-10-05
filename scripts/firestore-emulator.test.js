@@ -52,6 +52,7 @@ async function seed() {
     await db.doc('couriers/courier_1').set({zone_id: 'zone_1', is_available: true});
     await db.doc('orders/order_party').set({customer_id: 'customer_1', vendor_id: 'vendor_1', courier_id: 'courier_1', zone_id: 'zone_1', status: 'pending'});
     await db.doc('orders/order_open').set({customer_id: 'customer_1', vendor_id: 'vendor_1', courier_id: null, zone_id: 'zone_1', status: 'pending', dispatch_candidates: ['courier_1']});
+    await db.doc('orders/order_missing_candidates').set({customer_id: 'customer_1', vendor_id: 'vendor_1', courier_id: null, zone_id: 'zone_1', status: 'pending'});
     await db.doc('payment_intents/payment_1').set({customer_id: 'customer_1', order_id: 'order_party', method: 'manual_transfer', status: 'pending_verification'});
     await db.doc('payment_events/event_1').set({payment_id: 'payment_1'});
     await db.doc('wallet_topups/topup_1').set({customer_id: 'customer_1', status: 'pending'});
@@ -89,6 +90,7 @@ async function runRulesMatrix() {
   await allow('vendor reads vendor order', () => vendor.doc('orders/order_party').get());
   await allow('courier reads assigned order', () => courier.doc('orders/order_party').get());
   await allow('courier reads offered order', () => courier.doc('orders/order_open').get());
+  await deny('same-zone courier cannot read order without candidates', () => courier.doc('orders/order_missing_candidates').get());
   await allow('admin reads order', () => adminDbClient.doc('orders/order_party').get());
   await deny('guest reads order', () => guest.doc('orders/order_party').get());
   await deny('customer creates order directly', () => customer.doc('orders/direct').set({customer_id: 'customer_1'}));

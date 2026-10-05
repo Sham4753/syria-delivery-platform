@@ -20,7 +20,7 @@ class _ProductsPageState extends State<ProductsPage> {
   String? pendingIdempotencyKey;
   num discount = 0;
   num deliveryFeePreview = 0;
-  num get subtotal => cart.values.fold<num>(0, (sum, item) => sum + (item['price'] ?? 0) * (item['quantity'] ?? 1));
+  num get subtotal => cart.values.fold<num>(0, (total, item) => total + (item['price'] ?? 0) * (item['quantity'] ?? 1));
 
   Future<bool> ensureSignedIn() async {
     if (FirebaseAuth.instance.currentUser != null) return true;
@@ -49,7 +49,7 @@ class _ProductsPageState extends State<ProductsPage> {
       if (add == true) selected.add(Map<String, dynamic>.from(modifier));
     }
     final key = '$id-${selected.map((m) => m['name']).join('-')}';
-    final extra = selected.fold<num>(0, (sum, m) => sum + (m['price'] ?? 0));
+    final extra = selected.fold<num>(0, (total, m) => total + (m['price'] ?? 0));
     setState(() {
       couponCode = null;
       discount = 0;

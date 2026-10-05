@@ -34,6 +34,11 @@ class _LoginPageState extends State<LoginPage> {
         email: email.text.trim(),
         password: password.text,
       );
+      try {
+        await registerPushToken();
+      } catch (_) {
+        // Notifications are optional and must not block a successful login.
+      }
       if (!mounted) return;
       Navigator.pushReplacement(
         context,

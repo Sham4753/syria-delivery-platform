@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart'
@@ -5,6 +6,7 @@ import 'package:flutter/foundation.dart'
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +49,7 @@ String formatMoney(Object? value, {String? mode}) {
 }
 
 final appFunctions = FirebaseFunctions.instanceFor(region: 'europe-west1');
+StreamSubscription<String>? _pushTokenRefreshSubscription;
 
 void installAppErrorHandlers(String appName) {
   FlutterError.onError = (details) {
@@ -152,3 +155,20 @@ Future<void> connectToFirebaseEmulators() async {
   appFunctions.useFunctionsEmulator(host, 5001);
 }
 
+Future<void> registerPushToken() async {
+  if (kIsWeb) return;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+  final messaging = FirebaseMessaging.instance;
+  await messaging.requestPermission(alert: true, badge: true, sound: true);
+  Future<void> save(String? token) async {
+    if (token == null || token.isEmpty) return;
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'fcm_token': token,
+      'updated_at': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+  await save(await messaging.getToken());
+  await _pushTokenRefreshSubscription?.cancel();
+  _pushTokenRefreshSubscription = messaging.onTokenRefresh.listen(save);
+}

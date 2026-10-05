@@ -138,7 +138,9 @@ const base = () => ({pickup_address: pickup, dropoff_address: dropoff, descripti
     assert.strictEqual(db.store.get('users/cust').wallet_balance, 200);
     assert.strictEqual(db.store.get('courier_wallets/cour').debt, 200, 'courier owes the cash he kept');
     assert.ok(db.store.get('users/cust/wallet_ledger/change_o1') && db.store.get('courier_wallets/cour/ledger/change_o1'));
-    assert.strictEqual([...db.store.keys()].filter((k) => k.startsWith('financial_ledger/')).length, 1);
+    const ledgerEntries = [...db.store.entries()].filter(([k]) => k.startsWith('financial_ledger/')).map(([, value]) => value);
+    assert.strictEqual(ledgerEntries.length, 2, 'change-to-wallet writes a debit and a credit');
+    assert.strictEqual(ledgerEntries.filter((entry) => entry.direction === 'debit').reduce((sum, entry) => sum + entry.amount, 0), ledgerEntries.filter((entry) => entry.direction === 'credit').reduce((sum, entry) => sum + entry.amount, 0), 'change-to-wallet ledger balances');
     assert.strictEqual(db.store.get('change_requests/o1').status, 'approved');
     await rejects(fns.reviewChangeRequest({order_id: 'o1', decision: 'approve'}, ctx('admin')), 'failed-precondition', 'double approve');
     assert.strictEqual(db.store.get('users/cust').wallet_balance, 200, 'no double credit');

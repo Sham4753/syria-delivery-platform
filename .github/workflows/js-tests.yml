@@ -16,6 +16,7 @@ on:
       - 'scripts/**'
       - 'admin-dashboard/**'
       - '.github/workflows/js-tests.yml'
+  workflow_dispatch:
 
 jobs:
   script-tests:
@@ -29,15 +30,19 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: functions/package-lock.json
-      - name: Install Functions dependencies
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      - name: Install root and Functions dependencies
+        run: npm ci && npm ci --prefix functions
+      - name: Lint Functions
         working-directory: functions
-        run: npm ci
+        run: npm run lint
       - name: Run all discovered script tests
         shell: bash
         run: |
           set +e
-          mapfile -t tests < <(find scripts -maxdepth 1 -type f -name '*.test.js' ! -name 'firestore-emulator.test.js' ! -name 'functions-emulator.integration.test.js' -print | sort)
+          mapfile -t tests < <(find scripts -maxdepth 1 -type f -name '*.test.js' ! -name 'firestore-emulator.test.js' ! -name 'functions-emulator.integration.test.js' ! -name 'storage-emulator.test.js' -print | sort)
           tests+=(scripts/test-errand-functions.js scripts/test-errand-geo.js)
           failures=()
           for test_file in "${tests[@]}"; do

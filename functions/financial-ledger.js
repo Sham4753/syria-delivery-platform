@@ -36,11 +36,24 @@ function buildLedgerEntry({entryId, entryGroupId, account, direction, amount, cu
   };
 }
 
-function buildBalancedPair({entryGroupId, amount, currency, sourceType, sourceId, debitAccount, creditAccount, actorId, orderId, paymentId, settlementId, metadata}) {
+function buildBalancedPair({entryGroupId, amount, currency, sourceType, sourceId, actorId, orderId, paymentId, settlementId, debitAccount, creditAccount, metadata}) {
   return [
     buildLedgerEntry({entryId: `${entryGroupId}_debit`, entryGroupId, account: debitAccount, direction: 'debit', amount, currency, sourceType, sourceId, actorId, orderId, paymentId, settlementId, metadata}),
     buildLedgerEntry({entryId: `${entryGroupId}_credit`, entryGroupId, account: creditAccount, direction: 'credit', amount, currency, sourceType, sourceId, actorId, orderId, paymentId, settlementId, metadata}),
   ];
+}
+
+function assertBalancedEntries(entries) {
+  const totals = new Map();
+  for (const entry of entries) {
+    const key = `${entry.entry_group_id}:${entry.currency}`;
+    const signed = entry.direction === 'debit' ? entry.amount : -entry.amount;
+    totals.set(key, Math.round(((totals.get(key) || 0) + signed) * 100) / 100);
+  }
+  for (const [key, total] of totals) {
+    if (total !== 0) throw new Error(`Unbalanced ledger group: ${key}`);
+  }
+  return true;
 }
 
 function assertPaymentTransition(from, to) {
@@ -61,9 +74,8 @@ function assertPaymentTransition(from, to) {
 }
 
 function manualTransferLedgerEntries({paymentId, orderId, amount, currency = 'SYP', actorId, channel = 'bank_transfer'}) {
-  const group = `manual_transfer_${channel}_${paymentId}_paid`;
-  return buildBalancedPair({
-    entryGroupId: group,
+  const entries = buildBalancedPair({
+    entryGroupId: `manual_transfer_${channel}_${paymentId}_paid`,
     amount,
     currency,
     sourceType: 'manual_transfer_review',
@@ -75,8 +87,182 @@ function manualTransferLedgerEntries({paymentId, orderId, amount, currency = 'SY
     paymentId,
     metadata: {review: 'manual', immutable: true},
   });
+  assertBalancedEntries(entries);
+  return entries;
+}
+
+function changeToWalletLedgerEntries({orderId, amount, currency = 'SYP', actorId, customerId, courierId}) {
+  const entries = buildBalancedPair({
+    entryGroupId: `change_to_wallet_${orderId}`,
+    amount,
+    currency,
+    sourceType: 'change_to_wallet',
+    sourceId: orderId,
+    actorId,
+    orderId,
+    debitAccount: 'courier_cash_receivable',
+    creditAccount: 'customer_wallet_liability',
+    metadata: {customer_id: customerId, courier_id: courierId, immutable: true},
+  });
+  assertBalancedEntries(entries);
+  return entries;
+}
+
+function commissionLedgerEntries({orderId, vendorId, amount, currency = 'SYP', rate, actorId}) {
+  if (!(Number(amount) > 0)) return [];
+  const entries = buildBalancedPair({
+    entryGroupId: `commission_${orderId}`,
+    amount,
+    currency,
+    sourceType: 'order_commission',
+    sourceId: orderId,
+    actorId,
+    orderId,
+    debitAccount: 'vendor_commission_receivable',
+    creditAccount: 'platform_revenue',
+    metadata: {vendor_id: vendorId, rate, immutable: true},
+  });
+  assertBalancedEntries(entries);
+  return entries;
+}
+
+function settlementApplication({remitted, currentDebt, variance = 0, writeOffShortage = false}) {
+  const actualRemitted = money(remitted);
+  const debt = money(currentDebt);
+  const applied = Math.min(actualRemitted, debt);
+  const shortage = Math.max(0, -Number(variance || 0));
+  const writeOff = writeOffShortage ? Math.min(shortage, Math.max(0, debt - applied)) : 0;
+  const overpayment = Math.max(0, actualRemitted - applied);
+  return {
+    remitted: actualRemitted,
+    currentDebt: debt,
+    applied: money(applied),
+    shortage: money(shortage),
+    writeOff: money(writeOff),
+    overpayment: money(overpayment),
+    reviewNeeded: overpayment > 0,
+    remainingDebt: money(debt - applied - writeOff),
+  };
+}
+
+function settlementDecision({countedCash, openingCash, currentDebt, variance = 0, writeOffShortage = false}) {
+  const counted = Number(countedCash || 0);
+  const opening = Number(openingCash || 0);
+  const rawRemitted = counted - opening;
+  if (!Number.isFinite(rawRemitted)) throw new Error('Invalid counted or opening cash');
+  const remitted = Math.max(0, rawRemitted);
+  const shortage = Math.max(0, -Number(variance || 0));
+  const writeOffAllowed = writeOffShortage === true && rawRemitted >= 0;
+  const application = settlementApplication({remitted, currentDebt, variance, writeOffShortage: writeOffAllowed});
+  const reviewReason = application.reviewNeeded ? 'overpayment' : (rawRemitted < 0 && shortage > 0 ? 'below_opening' : null);
+  return {
+    ...application,
+    rawRemitted,
+    writeOffAllowed,
+    writeOffApplied: application.writeOff,
+    reviewNeeded: reviewReason !== null,
+    reviewReason,
+  };
+}
+
+function courierOverpaymentApplication({outstandingPayable, currentDebt, requestedAmount}) {
+  const payable = money(outstandingPayable);
+  const debt = money(currentDebt);
+  const requested = requestedAmount === undefined ? payable : money(requestedAmount);
+  const applied = Math.min(payable, debt, requested);
+  return {
+    outstandingPayable: payable,
+    currentDebt: debt,
+    requestedAmount: requested,
+    applied: money(applied),
+    remainingPayable: money(payable - applied),
+    remainingDebt: money(debt - applied),
+  };
+}
+
+function courierOverpaymentLedgerEntries({resolutionId, amount, currency = 'SYP', actorId, ownerId, settlementId}) {
+  const entries = buildBalancedPair({
+    entryGroupId: `courier_overpayment_resolution_${resolutionId}`,
+    amount,
+    currency,
+    sourceType: 'courier_overpayment_applied_to_debt',
+    sourceId: resolutionId,
+    actorId,
+    settlementId,
+    debitAccount: 'courier_overpayment_payable',
+    creditAccount: 'courier_cash_receivable',
+    metadata: {owner_id: ownerId, settlement_id: settlementId, immutable: true},
+  });
+  assertBalancedEntries(entries);
+  return entries;
+}
+
+function settlementLedgerEntries({settlementId, remitted, currentDebt, variance = 0, currency = 'SYP', actorId, ownerId, writeOffShortage = false}) {
+  const application = settlementApplication({remitted, currentDebt, variance, writeOffShortage});
+  const entries = [];
+  if (application.remitted > 0 && application.applied > 0) {
+    entries.push(...buildBalancedPair({
+      entryGroupId: `settlement_${settlementId}_remittance`,
+      amount: application.applied,
+      currency,
+      sourceType: 'shift_cash_remittance',
+      sourceId: settlementId,
+      actorId,
+      settlementId,
+      debitAccount: 'cash_on_hand',
+      creditAccount: 'courier_cash_receivable',
+      metadata: {owner_id: ownerId, remitted: application.remitted, applied: application.applied, immutable: true},
+    }));
+  }
+  if (application.overpayment > 0) {
+    entries.push(...buildBalancedPair({
+      entryGroupId: `settlement_${settlementId}_overpayment`,
+      amount: application.overpayment,
+      currency,
+      sourceType: 'shift_cash_overpayment',
+      sourceId: settlementId,
+      actorId,
+      settlementId,
+      debitAccount: 'cash_on_hand',
+      creditAccount: 'courier_overpayment_payable',
+      metadata: {owner_id: ownerId, variance, review_needed: true, immutable: true},
+    }));
+  }
+  if (application.writeOff > 0) {
+    entries.push(...buildBalancedPair({
+      entryGroupId: `settlement_${settlementId}_shortage_writeoff`,
+      amount: application.writeOff,
+      currency,
+      sourceType: 'shift_cash_shortage_writeoff',
+      sourceId: settlementId,
+      actorId,
+      settlementId,
+      debitAccount: 'cash_variance_loss',
+      creditAccount: 'courier_cash_receivable',
+      metadata: {owner_id: ownerId, variance, write_off: true, immutable: true},
+    }));
+  }
+  assertBalancedEntries(entries);
+  return entries;
 }
 
 const bankTransferLedgerEntries = (args) => manualTransferLedgerEntries({...args, channel: 'bank_transfer'});
 
-module.exports = {LEDGER_DIRECTIONS, PAYMENT_STATUSES, money, buildLedgerEntry, buildBalancedPair, assertPaymentTransition, manualTransferLedgerEntries, bankTransferLedgerEntries};
+module.exports = {
+  LEDGER_DIRECTIONS,
+  PAYMENT_STATUSES,
+  money,
+  buildLedgerEntry,
+  buildBalancedPair,
+  assertBalancedEntries,
+  assertPaymentTransition,
+  manualTransferLedgerEntries,
+  bankTransferLedgerEntries,
+  changeToWalletLedgerEntries,
+  commissionLedgerEntries,
+  settlementApplication,
+  settlementDecision,
+  courierOverpaymentApplication,
+  courierOverpaymentLedgerEntries,
+  settlementLedgerEntries,
+};

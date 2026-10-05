@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function user() { return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data; }
+    function admin() { return signedIn() && user().role == 'super_admin'; }
+    function vendorManager(vendorId) {
+      return signedIn()
+        && user().vendor_id == vendorId
+        && (user().role == 'vendor_admin' || user().role == 'vendor_supervisor');
+    }
+    function validImage() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/(png|jpeg|webp|gif)')
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    // Public app branding and banners are readable by clients, but only admins upload.
+    match /branding/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if admin() && validImage();
+      allow delete: if admin();
+    }
+    match /banners/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if admin() && validImage();
+      allow delete: if admin();
+    }
+    match /app-assets/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if admin() && validImage();
+      allow delete: if admin();
+    }
+
+    // Reserved vendor-owned asset path for vendor dashboard uploads.
+    match /vendor-assets/{vendorId}/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if (admin() || vendorManager(vendorId)) && validImage();
+      allow delete: if admin() || vendorManager(vendorId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

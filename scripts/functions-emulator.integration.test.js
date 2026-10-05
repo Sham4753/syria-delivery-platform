@@ -238,6 +238,22 @@ async function run() {
   assertError(await call('submitManualTransferProof', customerToken, {payment_id: capPayment, reference: key('CAP4')}), 'RESOURCE_EXHAUSTED', 'الحد الأقصى', 'manual reference attempts are capped at three');
   expect((await db.doc(`payment_intents/${capPayment}`).get()).data().reference_attempts === 3, 'manual reference attempt counter remains exactly three');
 
+  const overpaymentSettlementId = key('overpayment-settlement');
+  const overpaymentOperationId = key('overpayment-operation');
+  await db.doc(`settlements/${overpaymentSettlementId}`).set({status: 'approved', owner_type: 'courier', owner_id: courier.localId, shift_id: 'integration-shift', overpayment_amount: 40, overpayment_applied: 0, overpayment_remaining: 40});
+  await db.doc(`courier_wallets/${courier.localId}`).set({debt: 25}, {merge: true});
+  const concurrentResolutions = await Promise.all([
+    call('resolveCourierOverpayment', adminToken, {settlement_id: overpaymentSettlementId, operation_id: overpaymentOperationId, amount: 40}),
+    call('resolveCourierOverpayment', adminToken, {settlement_id: overpaymentSettlementId, operation_id: overpaymentOperationId, amount: 40}),
+  ]);
+  expect(concurrentResolutions.every(result => result.response.ok && result.body.result?.applied === 25), 'concurrent overpayment resolution applies debt once');
+  expect(concurrentResolutions.some(result => result.body.result?.replayed === true), 'repeated overpayment operation is idempotent');
+  expect(Number((await db.doc(`courier_wallets/${courier.localId}`).get()).data()?.debt) === 0, 'overpayment resolution leaves no remaining future debt');
+  const resolvedSettlement = (await db.doc(`settlements/${overpaymentSettlementId}`).get()).data() || {};
+  expect(Number(resolvedSettlement.overpayment_applied) === 25 && Number(resolvedSettlement.overpayment_remaining) === 15, 'overpayment resolution stores applied and remaining amounts');
+  const resolutionLedger = await db.collection('financial_ledger').where('settlement_id', '==', overpaymentSettlementId).get();
+  expect(resolutionLedger.size === 2, 'idempotent overpayment resolution writes one balanced ledger pair');
+
   console.log(JSON.stringify({status: 'passed', project_id: PROJECT_ID, tool: 'direct callable HTTP with Auth Emulator ID tokens', cases_passed: counters.passed, duration_ms: Date.now() - started, duration_seconds: Number(((Date.now() - started) / 1000).toFixed(2)), checks: counters.cases}, null, 2));
 }
 run().catch((error) => {

@@ -3,9 +3,9 @@ const MAX_LOYALTY_POINTS_DIVISOR = 1000000;
 
 function loyaltyPointsDivisor(config = {}) {
   const divisor = Number(config.loyalty_points_divisor);
-  return Number.isFinite(divisor) && divisor >= 1 && divisor <= MAX_LOYALTY_POINTS_DIVISOR
-    ? divisor
-    : DEFAULT_LOYALTY_POINTS_DIVISOR;
+  return Number.isFinite(divisor) && divisor >= 1 && divisor <= MAX_LOYALTY_POINTS_DIVISOR ?
+    divisor :
+    DEFAULT_LOYALTY_POINTS_DIVISOR;
 }
 
 function loyaltyPointsForOrder({subtotal = 0, discount = 0, rate = 0, config = {}} = {}) {
