@@ -97,6 +97,22 @@ assert.deepStrictEqual(overpaymentApplication, {
   remainingPayable: 15,
   remainingDebt: 0,
 });
+assert.deepStrictEqual(courierOverpaymentApplication({outstandingPayable: 40, currentDebt: 0}), {
+  outstandingPayable: 40,
+  currentDebt: 0,
+  requestedAmount: 40,
+  applied: 0,
+  remainingPayable: 40,
+  remainingDebt: 0,
+});
+assert.deepStrictEqual(courierOverpaymentApplication({outstandingPayable: 40, currentDebt: 100, requestedAmount: 75}), {
+  outstandingPayable: 40,
+  currentDebt: 100,
+  requestedAmount: 75,
+  applied: 40,
+  remainingPayable: 0,
+  remainingDebt: 60,
+});
 const overpaymentResolutionEntries = courierOverpaymentLedgerEntries({resolutionId: 'settlement_debt_less_25', amount: overpaymentApplication.applied, actorId: 'admin_1', ownerId: 'courier_1', settlementId: 'settlement_debt_less'});
 assert.doesNotThrow(() => assertBalancedEntries(overpaymentResolutionEntries));
 assert.deepStrictEqual(accountBalances(overpaymentResolutionEntries), {courier_overpayment_payable: 25, courier_cash_receivable: -25});
