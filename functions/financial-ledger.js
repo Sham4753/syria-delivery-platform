@@ -165,6 +165,38 @@ function settlementDecision({countedCash, openingCash, currentDebt, variance = 0
   };
 }
 
+function courierOverpaymentApplication({outstandingPayable, currentDebt, requestedAmount}) {
+  const payable = money(outstandingPayable);
+  const debt = money(currentDebt);
+  const requested = requestedAmount === undefined ? payable : money(requestedAmount);
+  const applied = Math.min(payable, debt, requested);
+  return {
+    outstandingPayable: payable,
+    currentDebt: debt,
+    requestedAmount: requested,
+    applied: money(applied),
+    remainingPayable: money(payable - applied),
+    remainingDebt: money(debt - applied),
+  };
+}
+
+function courierOverpaymentLedgerEntries({resolutionId, amount, currency = 'SYP', actorId, ownerId, settlementId}) {
+  const entries = buildBalancedPair({
+    entryGroupId: `courier_overpayment_resolution_${resolutionId}`,
+    amount,
+    currency,
+    sourceType: 'courier_overpayment_applied_to_debt',
+    sourceId: resolutionId,
+    actorId,
+    settlementId,
+    debitAccount: 'courier_overpayment_payable',
+    creditAccount: 'courier_cash_receivable',
+    metadata: {owner_id: ownerId, settlement_id: settlementId, immutable: true},
+  });
+  assertBalancedEntries(entries);
+  return entries;
+}
+
 function settlementLedgerEntries({settlementId, remitted, currentDebt, variance = 0, currency = 'SYP', actorId, ownerId, writeOffShortage = false}) {
   const application = settlementApplication({remitted, currentDebt, variance, writeOffShortage});
   const entries = [];
@@ -230,5 +262,7 @@ module.exports = {
   commissionLedgerEntries,
   settlementApplication,
   settlementDecision,
+  courierOverpaymentApplication,
+  courierOverpaymentLedgerEntries,
   settlementLedgerEntries,
 };

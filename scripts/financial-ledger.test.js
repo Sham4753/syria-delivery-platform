@@ -6,6 +6,8 @@ const {
   assertPaymentTransition,
   changeToWalletLedgerEntries,
   commissionLedgerEntries,
+  courierOverpaymentApplication,
+  courierOverpaymentLedgerEntries,
   settlementDecision,
   settlementLedgerEntries,
 } = require('../functions/financial-ledger');
@@ -85,5 +87,19 @@ assertSettlementCase('debt_less_than_expected', {countedCash: 100, openingCash: 
   decision: {remitted: 100, currentDebt: 60, applied: 60, shortage: 0, writeOff: 0, overpayment: 40, reviewNeeded: true, remainingDebt: 0, rawRemitted: 100, writeOffAllowed: false, writeOffApplied: 0, reviewReason: 'overpayment'},
   balances: {cash_on_hand: 100, courier_cash_receivable: -60, courier_overpayment_payable: -40},
 });
+
+const overpaymentApplication = courierOverpaymentApplication({outstandingPayable: 40, currentDebt: 25});
+assert.deepStrictEqual(overpaymentApplication, {
+  outstandingPayable: 40,
+  currentDebt: 25,
+  requestedAmount: 40,
+  applied: 25,
+  remainingPayable: 15,
+  remainingDebt: 0,
+});
+const overpaymentResolutionEntries = courierOverpaymentLedgerEntries({resolutionId: 'settlement_debt_less_25', amount: overpaymentApplication.applied, actorId: 'admin_1', ownerId: 'courier_1', settlementId: 'settlement_debt_less'});
+assert.doesNotThrow(() => assertBalancedEntries(overpaymentResolutionEntries));
+assert.deepStrictEqual(accountBalances(overpaymentResolutionEntries), {courier_overpayment_payable: 25, courier_cash_receivable: -25});
+assert.strictEqual(overpaymentResolutionEntries[0].source_type, 'courier_overpayment_applied_to_debt');
 
 console.log('Financial ledger tests passed: pure settlement decisions and all remittance cases.');

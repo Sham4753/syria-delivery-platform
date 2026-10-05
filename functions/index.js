@@ -28,7 +28,7 @@ const {normalizePoint, pickZone} = require('./geo');
 const {prepareCreateOrderPayload} = require('./atomicity-guard');
 const {customerReferralDefaults} = require('./referral-profile');
 const {courierDebtForDeliveredOrder} = require('./courier-settlement');
-const {manualTransferLedgerEntries, assertPaymentTransition, settlementDecision, settlementLedgerEntries, commissionLedgerEntries} = require('./financial-ledger');
+const {manualTransferLedgerEntries, assertPaymentTransition, settlementDecision, settlementLedgerEntries, courierOverpaymentApplication, courierOverpaymentLedgerEntries, commissionLedgerEntries} = require('./financial-ledger');
 const {CHANNELS, normalizeReference, referenceHash, referenceReservationId, normalizeChannel, buildManualTransferSettings, assertAmountWithinChannel, assertManualTransferChannel} = require('./manual-transfer');
 const {normalizeProviderConfig, verifySignature, providerEvent, providerStatusForEvent, providerLedgerEntries} = require('./payment-provider');
 const {VENDOR_ROLES, canTransition} = require('./kds-policy');
@@ -655,11 +655,9 @@ exports.approveSettlement = onCall(async (data, context) => {
     if (settlement.data()?.status !== 'pending_approval') throw new HttpsError('failed-precondition', 'التسوية ليست بانتظار الاعتماد');
     const settled = settlement.data() || {};
     const writeOffShortage = data?.writeOffShortage === true;
-    const settlementUpdate = {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), review_needed: false, review_reason: null, writeOff_applied: 0};
+    const settlementUpdate = {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), review_needed: false, review_reason: null, writeOff_applied: 0, overpayment_amount: 0, overpayment_applied: 0};
     if (settled.owner_type === 'courier' && settled.owner_id) {
       const walletRef = db.doc(`courier_wallets/${settled.owner_id}`);
-      const rawRemitted = Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0);
-      if (!Number.isFinite(rawRemitted)) throw new HttpsError('failed-precondition', 'المبلغ المسلم غير صالح');
       const walletSnap = await tx.get(walletRef);
       const currentDebt = Math.max(0, Number(walletSnap.data()?.debt || 0));
       const decision = settlementDecision({countedCash: settled.counted_cash, openingCash: settled.opening_cash, currentDebt, variance: settled.variance, writeOffShortage});
@@ -669,6 +667,7 @@ exports.approveSettlement = onCall(async (data, context) => {
       settlementUpdate.review_needed = decision.reviewNeeded;
       settlementUpdate.review_reason = reviewReason;
       settlementUpdate.writeOff_applied = writeOffApplied;
+      settlementUpdate.overpayment_amount = decision.overpayment;
       tx.set(walletRef, {debt: decision.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
       const entries = settlementLedgerEntries({settlementId, remitted: decision.remitted, currentDebt, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id, writeOffShortage: decision.writeOffAllowed});
       for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
@@ -676,6 +675,39 @@ exports.approveSettlement = onCall(async (data, context) => {
     tx.update(settlementRef, settlementUpdate);
   });
   return {settlement_id: settlementId, status: 'approved', writeOff_applied: writeOffApplied, review_reason: reviewReason};
+});
+
+exports.resolveCourierOverpayment = onCall(async (data, context) => {
+  if (!context.auth) throw new HttpsError('unauthenticated', 'يجب تسجيل الدخول أولاً');
+  await requireRole(context.auth.uid, ['super_admin']);
+  const settlementId = String(data?.settlement_id || '').trim();
+  if (!settlementId) throw new HttpsError('invalid-argument', 'رقم التسوية مطلوب');
+  const requestedAmount = data?.amount === undefined ? undefined : Number(data.amount);
+  if (requestedAmount !== undefined && (!Number.isFinite(requestedAmount) || requestedAmount <= 0)) throw new HttpsError('invalid-argument', 'مبلغ التسوية غير صالح');
+  const settlementRef = db.doc(`settlements/${settlementId}`);
+  let applied = 0;
+  let remainingPayable = 0;
+  await db.runTransaction(async (tx) => {
+    const settlementSnap = await tx.get(settlementRef);
+    if (!settlementSnap.exists) throw new HttpsError('not-found', 'التسوية غير موجودة');
+    const settlement = settlementSnap.data() || {};
+    if (settlement.status !== 'approved' || settlement.owner_type !== 'courier' || !settlement.owner_id) throw new HttpsError('failed-precondition', 'التسوية ليست فائضًا معتمدًا لمندوب');
+    const walletRef = db.doc(`courier_wallets/${settlement.owner_id}`);
+    const walletSnap = await tx.get(walletRef);
+    const currentDebt = Math.max(0, Number(walletSnap.data()?.debt || 0));
+    const outstandingPayable = Math.max(0, Number(settlement.overpayment_amount || 0) - Number(settlement.overpayment_applied || 0));
+    const application = courierOverpaymentApplication({outstandingPayable, currentDebt, requestedAmount});
+    if (application.applied <= 0) throw new HttpsError('failed-precondition', 'لا يوجد فائض قابل للخصم أو دين لاحق');
+    applied = application.applied;
+    remainingPayable = application.remainingPayable;
+    const appliedBefore = Number(settlement.overpayment_applied || 0);
+    const resolutionId = `${settlementId}_${String(Math.round((appliedBefore + applied) * 100))}`;
+    const entries = courierOverpaymentLedgerEntries({resolutionId, amount: applied, actorId: context.auth.uid, ownerId: settlement.owner_id, settlementId});
+    tx.set(walletRef, {debt: application.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
+    tx.update(settlementRef, {overpayment_applied: appliedBefore + applied, overpayment_remaining: remainingPayable, updated_at: FieldValue.serverTimestamp()});
+    for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settlement.shift_id, owner_type: settlement.owner_type, owner_id: settlement.owner_id, created_at: FieldValue.serverTimestamp()});
+  });
+  return {settlement_id: settlementId, applied, remaining_payable: remainingPayable, action: 'apply_to_debt'};
 });
 
 
