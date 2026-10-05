@@ -648,12 +648,14 @@ exports.approveSettlement = onCall(async (data, context) => {
   await requireRole(context.auth.uid, ['super_admin']);
   const settlementId = String(data?.settlement_id || '').trim(); if (!settlementId) throw new HttpsError('invalid-argument', 'رقم التسوية مطلوب');
   const settlementRef = db.doc(`settlements/${settlementId}`);
+  let writeOffApplied = 0;
+  let reviewReason = null;
   await db.runTransaction(async (tx) => {
     const settlement = await tx.get(settlementRef); if (!settlement.exists) throw new HttpsError('not-found', 'التسوية غير موجودة');
     if (settlement.data()?.status !== 'pending_approval') throw new HttpsError('failed-precondition', 'التسوية ليست بانتظار الاعتماد');
     const settled = settlement.data() || {};
     const writeOffShortage = data?.writeOffShortage === true;
-    const settlementUpdate = {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), review_needed: false};
+    const settlementUpdate = {status: 'approved', approved_by: context.auth.uid, approved_at: FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(), review_needed: false, review_reason: null, writeOff_applied: 0};
     if (settled.owner_type === 'courier' && settled.owner_id) {
       const walletRef = db.doc(`courier_wallets/${settled.owner_id}`);
       const rawRemitted = Number(settled.counted_cash || 0) - Number(settled.opening_cash || 0);
@@ -664,14 +666,18 @@ exports.approveSettlement = onCall(async (data, context) => {
       const shortage = Math.max(0, -Number(settled.variance || 0));
       const application = settlementApplication({remitted, currentDebt, variance: settled.variance, writeOffShortage: writeOffShortage && rawRemitted >= 0});
       settlementUpdate.shortage = shortage;
-      settlementUpdate.review_needed = application.reviewNeeded || (rawRemitted < 0 && shortage > 0);
+      writeOffApplied = application.writeOff;
+      reviewReason = application.reviewNeeded ? 'overpayment' : (rawRemitted < 0 && shortage > 0 ? 'below_opening' : null);
+      settlementUpdate.review_needed = reviewReason !== null;
+      settlementUpdate.review_reason = reviewReason;
+      settlementUpdate.writeOff_applied = writeOffApplied;
       tx.set(walletRef, {debt: application.remainingDebt, updated_at: FieldValue.serverTimestamp()}, {merge: true});
       const entries = settlementLedgerEntries({settlementId, remitted, currentDebt, variance: settled.variance, actorId: context.auth.uid, ownerId: settled.owner_id, writeOffShortage: writeOffShortage && rawRemitted >= 0});
       for (const entry of entries) tx.create(db.doc(`financial_ledger/${entry.entry_id}`), {...entry, shift_id: settled.shift_id, owner_type: settled.owner_type, owner_id: settled.owner_id, created_at: FieldValue.serverTimestamp()});
     }
     tx.update(settlementRef, settlementUpdate);
   });
-  return {settlement_id: settlementId, status: 'approved'};
+  return {settlement_id: settlementId, status: 'approved', writeOff_applied: writeOffApplied, review_reason: reviewReason};
 });
 
 
